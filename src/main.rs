@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use reqwest::{Error,get};
 use std::collections::HashMap;
 
+const PAST_DAYS: i32 = 1;
+const FORECAST_DAYS: i32 = 2;
+
 #[derive(Serialize, Deserialize, Debug)]
 struct IpApiResponse {
     status: String,
@@ -123,8 +126,43 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
     url
 }
 
-const PAST_DAYS: i32 = 1;
-const FORECAST_DAYS: i32 = 2;
+fn wmo_decode<'a>(wmo: i32) -> &'a str {
+    match wmo {
+        0 => " ~Clear",
+        1 => " <Clear",
+        2 => " ~Cloudy",
+        3 => " >Cloudy",
+        44|45 => " ~Foggy",
+        48 => " Fog+Rime",
+        51 => " Drizzling-",
+        53 => " Drizzling~",
+        55 => " Drizzling+",
+        61 => " Raining-",
+        63 => " Raining~",
+        65 => " Raining+",
+        71 => " Snowing-",
+        73 => " Snowing~",
+        75 => " Snowing+",
+        77 => " Snow Grains",
+        80 => " Showers-",
+        81 => " Showers~",
+        82 => " Showers+",
+        85 => " Snow Showers-",
+        86 => " Snow Showers+",
+        95 => " Thunderstorm~",
+        0..=9 => "N/A 0-9",
+        10..=19 => "N/A 10-19",
+        20..=29 => "N/A 20-29",
+        30..=39 => "N/A 30-39",
+        40..=49 => "N/A 40-49",
+        50..=59 => "N/A 50-59",
+        60..=69 => "N/A 60-69",
+        70..=79 => "N/A 70-79",
+        80..=89 => "N/A 80-89",
+        90..=99 => "N/A 90-99",
+        _ => "N/A"
+    }
+}
 
 fn main() {
     let ip_url = "http://ip-api.com/json/";
@@ -149,7 +187,11 @@ fn main() {
         },
     };
 
+    let temp = m_d.current.temperature_2m;
+    let humid = m_d.current.relative_humidity_2m;
+    let precip_max = m_d.daily.precipitation_probability_max[PAST_DAYS as usize];
+    let wmo_msg = wmo_decode(m_d.current.weather_code);
     // println!("{:#?}",m_d);
-    println!("{}° {}% ~{}% {}", m_d.current.temperature_2m, m_d.current.relative_humidity_2m, m_d.daily.precipitation_probability_max[PAST_DAYS as usize], m_d.current.weather_code)
+    println!("{}° {}% ~{}% {}", temp, humid, precip_max, wmo_msg)
 }
 
