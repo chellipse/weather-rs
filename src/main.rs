@@ -2,6 +2,10 @@
 use serde::{Deserialize, Serialize};
 use reqwest::{Error,get};
 use std::collections::HashMap;
+use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static QUIET: AtomicBool = AtomicBool::new(false);
 
 const PAST_DAYS: i32 = 1;
 const FORECAST_DAYS: i32 = 2;
@@ -65,7 +69,10 @@ struct DailyData {
 #[tokio::main]
 async fn request_ip_api(url: &str) -> Result<IpApiResponse, Error> {
 
-    println!("Getting ip-api response...");
+    if !QUIET.load(Ordering::SeqCst) {
+        println!("Getting ip-api response...");
+    }
+
     let response = get(url).await?.json::<IpApiResponse>().await?;
 
     Ok(response)
@@ -74,7 +81,10 @@ async fn request_ip_api(url: &str) -> Result<IpApiResponse, Error> {
 #[tokio::main]
 async fn request_meteo_api(url: &str) -> Result<MeteoApiResponse, Error> {
 
+    if !QUIET.load(Ordering::SeqCst) {
     println!("Getting meteo-api response...");
+    }
+
     let response = get(url).await?.json::<MeteoApiResponse>().await?;
 
     Ok(response)
@@ -165,6 +175,12 @@ fn wmo_decode<'a>(wmo: i32) -> &'a str {
 }
 
 fn main() {
+    for arg in env::args().skip(1) {
+        if arg == "--quiet" || arg == "-q" {
+            QUIET.store(true, Ordering::SeqCst);
+        }
+    }
+
     let ip_url = "http://ip-api.com/json/";
     let ip_response = request_ip_api(ip_url);
 
