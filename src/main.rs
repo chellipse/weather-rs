@@ -4,18 +4,40 @@ use std::env;
 use std::sync::Mutex;
 use lazy_static::lazy_static;
 use serde::de::DeserializeOwned;
+use std::time::Instant;
 
 mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
 
+#[derive(Clone)]
 enum Modes {
     Short,
     Long,
 }
 
+#[derive(Clone)]
+struct Settings {
+    mode: Modes,
+    quiet: bool,
+    runtime_info: bool,
+    no_color: bool,
+}
+
+struct Rgb {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
 lazy_static! {
-    static ref QUIET: Mutex<bool> = Mutex::new(false);
     static ref MODE: Mutex<Modes> = Mutex::new(Modes::Short); // Default mode
+    static ref START_TIME: Mutex<Instant> = Mutex::new(Instant::now());
+    static ref SETTINGS: Mutex<Settings> = Mutex::new(Settings {
+        mode: Modes::Short,
+        quiet: false,
+        runtime_info: false,
+        no_color: false,
+    });
 }
 
 // must be >= 1
@@ -27,30 +49,18 @@ const DEFAULT_LAT: f32 = 35.9145;
 const DEFAULT_LON: f32 = -78.9225;
 const DEFAULT_TIMEZONE: &str = "America/New_York";
 
-struct Rgb {
-    r: u8,
-    g: u8,
-    b: u8,
-}
+const BAR_MAX: usize = 16;
 
 static WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 static BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 static RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
-static GREEN: Rgb = Rgb { r: 0, g: 255, b: 0 };
+static CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
 static BLUE: Rgb = Rgb { r: 0, g: 0, b: 255 };
-
-struct LerpVals {
-    val: Vec<f32>,
-    low: f32,
-    high: f32,
-    low_rgb: Rgb,
-    high_rgb: Rgb,
-}
 
 // ...
 #[tokio::main]
 async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
-    if !*QUIET.lock().unwrap() {
+    if !SETTINGS.lock().unwrap().quiet {
         println!("Querying {}...", url.chars().skip(7).take(20).collect::<String>());
     }
 
@@ -105,41 +115,41 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
 }
 
 // ...
-fn wmo_decode<'a>(wmo: i32) -> &'a str {
+fn wmo_decode<'a>(wmo: u8) -> String {
     match wmo {
-        0 => " ~Clear",
-        1 => " <Clear",
-        2 => " ~Cloudy",
-        3 => " >Cloudy",
-        44|45 => " ~Foggy",
-        48 => " Fog+Rime",
-        51 => " Drizzling-",
-        53 => " Drizzling~",
-        55 => " Drizzling+",
-        61 => " Raining-",
-        63 => " Raining~",
-        65 => " Raining+",
-        71 => " Snowing-",
-        73 => " Snowing~",
-        75 => " Snowing+",
-        77 => " Snow Grains",
-        80 => " Showers-",
-        81 => " Showers~",
-        82 => " Showers+",
-        85 => " Snow Showers-",
-        86 => " Snow Showers+",
-        95 => " Thunderstorm~",
-        0..=9 => "N/A 0-9",
-        10..=19 => "N/A 10-19",
-        20..=29 => "N/A 20-29",
-        30..=39 => "N/A 30-39",
-        40..=49 => "N/A 40-49",
-        50..=59 => "N/A 50-59",
-        60..=69 => "N/A 60-69",
-        70..=79 => "N/A 70-79",
-        80..=89 => "N/A 80-89",
-        90..=99 => "N/A 90-99",
-        _ => "N/A"
+        0 => add_esc(" ~Clear", &CLEAR_BLUE),
+        1 => add_esc(" <Clear", &CLEAR_BLUE),
+        2 => add_esc(" ~Cloudy", &CLEAR_BLUE),
+        3 => add_esc(" >Cloudy", &CLEAR_BLUE),
+        44|45 => add_esc(" ~Foggy", &CLEAR_BLUE),
+        48 => add_esc(" Fog+Rime", &CLEAR_BLUE),
+        51 => add_esc(" Drizzling-", &CLEAR_BLUE),
+        53 => add_esc(" Drizzling~", &CLEAR_BLUE),
+        55 => add_esc(" Drizzling+", &CLEAR_BLUE),
+        61 => add_esc(" Raining-", &CLEAR_BLUE),
+        63 => add_esc(" Raining~", &CLEAR_BLUE),
+        65 => add_esc(" Raining+", &CLEAR_BLUE),
+        71 => add_esc(" Snowing-", &CLEAR_BLUE),
+        73 => add_esc(" Snowing~", &CLEAR_BLUE),
+        75 => add_esc(" Snowing+", &CLEAR_BLUE),
+        77 => add_esc(" Snow Grains", &CLEAR_BLUE),
+        80 => add_esc(" Showers-", &CLEAR_BLUE),
+        81 => add_esc(" Showers~", &CLEAR_BLUE),
+        82 => add_esc(" Showers+", &CLEAR_BLUE),
+        85 => add_esc(" Snow Showers-", &CLEAR_BLUE),
+        86 => add_esc(" Snow Showers+", &CLEAR_BLUE),
+        95 => add_esc(" Thunderstorm~", &CLEAR_BLUE),
+        0..=9 => add_esc("N/A 0-9", &CLEAR_BLUE),
+        10..=19 => add_esc("N/A 10-19", &CLEAR_BLUE),
+        20..=29 => add_esc("N/A 20-29", &CLEAR_BLUE),
+        30..=39 => add_esc("N/A 30-39", &CLEAR_BLUE),
+        40..=49 => add_esc("N/A 40-49", &CLEAR_BLUE),
+        50..=59 => add_esc("N/A 50-59", &CLEAR_BLUE),
+        60..=69 => add_esc("N/A 60-69", &CLEAR_BLUE),
+        70..=79 => add_esc("N/A 70-79", &CLEAR_BLUE),
+        80..=89 => add_esc("N/A 80-89", &CLEAR_BLUE),
+        90..=99 => add_esc("N/A 90-99", &CLEAR_BLUE),
+        _ => add_esc("N/A", &CLEAR_BLUE)
     }
 }
 
@@ -155,8 +165,20 @@ fn process_api_response<T>(input: Result<T, Error>, url: &str) -> T {
 }
 
 // outputs a String with color escapes equal to str + escapes for color rgb
-fn add_escapes(str: String, color: Rgb) -> String {
-    format!("\x1b[38;2;{};{};{}m{}\x1b[0m", color.r, color.g, color.b, str)
+// fn add_escapes_borrow(str: String, color: Rgb) -> String {
+//     if !SETTINGS.lock().unwrap().no_color {
+//         format!("\x1b[38;2;{};{};{}m{}\x1b[0m", color.r, color.g, color.b, str)
+//     } else {
+//         str
+//     }
+// }
+
+fn add_esc(str: &str, color: &Rgb) -> String {
+    if !SETTINGS.lock().unwrap().no_color {
+        format!("\x1b[38;2;{};{};{}m{}\x1b[0m", color.r, color.g, color.b, str)
+    } else {
+        str.to_string()
+    }
 }
 
 // linearly interpolates A's position between B and C to D and E
@@ -173,13 +195,6 @@ fn rgb_lerp(x: f32, y: f32, z: f32, color1: &Rgb, color2: &Rgb) -> Rgb {
     }
 }
 
-// outputs a string with lerp'd color escapes
-// fn colorize_lerp(legend: &str, x: f32, y: f32, z: f32, color1: &Rgb, color2: &Rgb) -> String {
-//     let the_color = rgb_lerp(x, y, z, color1, color2);
-//     let display: String = format!(legend, x);
-//     add_escapes(display, the_color)
-// }
-
 // prints a single line weather update, good for status bars
 fn one_line_weather(md: MeteoApiResponse) {
     let temp_now = md.current.temperature_2m;
@@ -190,17 +205,42 @@ fn one_line_weather(md: MeteoApiResponse) {
 }
 
 // removes indices >
-fn rm_indices(input: Vec<f32>, current: u8, start: u8, end: u8) -> Vec<f32> {
+fn rm_indices<T>(input: Vec<T>, current: u8, start: u8, end: u8) -> Vec<T> {
     let mut result = input;
     result.drain(0 as usize..current as usize-start as usize);
     result.truncate(end as usize+start as usize);
     result
 }
 
-// ...
+fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
+    let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
+    let mut blocks: String = "█".repeat(x as usize);
+    let y = x-x.trunc();
+    let conversion = match y {
+        x if x >= 0.0 && x < 1.0 / 7.0 => "▏",
+        x if x >= 1.0 / 7.0 && x < 2.0 / 7.0 => "▎",
+        x if x >= 2.0 / 7.0 && x < 3.0 / 7.0 => "▍",
+        x if x >= 3.0 / 7.0 && x < 4.0 / 7.0 => "▌",
+        x if x >= 4.0 / 7.0 && x < 5.0 / 7.0 => "▋",
+        x if x >= 5.0 / 7.0 && x < 6.0 / 7.0 => "▊",
+        x if x >= 6.0 / 7.0 && x < 1.0 => "▉",
+        _ => "*",
+    };
+    blocks.push_str(conversion);
+    let result = fill_out(blocks, bar_max);
+    format!("{}", result)
+}
+
+fn fill_out(msg: String, max: usize) -> String {
+    let remain = max - msg.chars().count();
+    let spaces: String = " ".repeat(remain);
+    format!("{}{}", msg, spaces)
+}
+
+// displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
 
-    let time_data = md.minutely_15.time;
+    let time_data = &md.minutely_15.time;
     let start_time = 6 * 4;
     let end_time = 24 * 4;
     let mut current_time_index: u8 = 0 + start_time;
@@ -211,58 +251,107 @@ fn long_weather(md: MeteoApiResponse) {
         }
     };
 
+    let time: Vec<u32> = rm_indices(md.minutely_15.time.clone(), current_time_index, start_time, end_time);
+
     let temp: Vec<f32> = rm_indices(md.minutely_15.temperature_2m.clone(), current_time_index, start_time, end_time);
-    // let temp_bar: Vec<&str> = mk_bar(temp);
 
     let humid: Vec<f32> = rm_indices(md.minutely_15.relative_humidity_2m.clone(), current_time_index, start_time, end_time);
 
     let precip: Vec<f32> = rm_indices(md.minutely_15.precipitation_probability.clone(), current_time_index, start_time, end_time);
-    // let precip_bar: Vec<&str> = mk_bar(precip);
 
-    // let wmo: Vec<&str> = get_wmo(md.minutely_15.weather_code);
+    let wmo: Vec<u8> = rm_indices(md.minutely_15.weather_code.clone(), current_time_index, start_time, end_time);
 
     for i in (0..temp.len()).step_by(4) {
+        let time_offset = time[i] as i64 + &md.utc_offset_seconds;
+        let hour = (time_offset / 3600) % 24; // 3600 seconds in an hour
+        let hour_stdwth = fill_out(hour.to_string(), 2);
+
         // temp
         let rgb_temp: Rgb = match temp[i] {
             x if (0.0..100.0).contains(&x) => {
-                rgb_lerp(temp[i],0.0,100.0,&BLUE,&RED)
+                rgb_lerp(temp[i],20.0,90.0,&BLUE,&RED)
             },
             _ => {
                 rgb_lerp(temp[i],-100.0,130.0,&BLACK,&WHITE)
             },
         };
-        let format_temp = add_escapes(format!("{}°",temp[i]),rgb_temp);
+        let format_temp = add_esc(&format!("{:.1}°",temp[i]),&rgb_temp);
+
+        // temp bar
+        let low = temp.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let high = temp.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let temp_bar = mk_bar(&temp[i], low, high, &1.0, BAR_MAX);
+        let format_temp_bar = add_esc(&format!("{}",temp_bar),&rgb_temp);
 
         // humidity
-        let rgb_humid = rgb_lerp(humid[i],0.0,100.0,&BLUE,&RED);
-        let format_humid = add_escapes(format!("{}%",humid[i]),rgb_humid);
+        let rgb_humid = rgb_lerp(humid[i],20.0,80.0,&WHITE,&CLEAR_BLUE);
+        let format_humid = add_esc(&format!("{}%",humid[i]),&rgb_humid);
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i],0.0,100.0,&WHITE,&BLUE);
-        let format_precip = add_escapes(format!("{}%",precip[i]),rgb_precip);
+        let format_precip = add_esc(&format!("{}%",precip[i]),&rgb_precip);
 
-        println!("{}   {}   {}", format_temp, format_humid, format_precip)
-    }
+        // precip bar
+        let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, BAR_MAX);
+        let format_precip_bar = add_esc(&format!("{}",precip_bar),&rgb_precip);
+
+        // wmo code msg
+        let format_wmo = wmo_decode(wmo[i]);
+
+        print!("{}   ", hour_stdwth);
+        print!("{}   ", format_temp);
+        print!("{}   ", format_temp_bar);
+        print!("{}   ", format_humid);
+        print!("{}   ", format_precip);
+        print!("{}   ", format_precip_bar);
+        print!("{}   ", format_wmo);
+        println!("");
+    };
+    if SETTINGS.lock().unwrap().runtime_info {
+        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
+    };
 }
 
 fn main() {
     for arg in env::args().skip(1) {
         match arg.as_str() {
-            "--quiet" | "-q" => *QUIET.lock().unwrap() = true,
-            "-l" => *MODE.lock().unwrap() = Modes::Long,
-            _ => {}
+            "--quiet" | "-q" => SETTINGS.lock().unwrap().quiet = true,
+            "--long" | "-l" => SETTINGS.lock().unwrap().mode = Modes::Long,
+            "--runtime-info" => SETTINGS.lock().unwrap().runtime_info = true,
+            "--no-color" => SETTINGS.lock().unwrap().no_color = true,
+            _ => println!("Unrecognized option: {}", arg)
         }
     }
+    let settings_clone = {
+        let settings = SETTINGS.lock().unwrap();
+        (*settings).clone()
+    };
+    // print time stamp in ms if "--runtime-info" was submitted
+    if settings_clone.runtime_info {
+        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
+    }
 
+    // get lat, lon, and timezone
     let ip_url = "http://ip-api.com/json/";
     let ip_response: Result<IpApiResponse, Error> = request_api(ip_url);
     let ip_data = process_api_response(ip_response, ip_url);
 
+    // print time stamp in ms if "--runtime-info" was submitted
+    if settings_clone.runtime_info {
+        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
+    }
+
+    // get weather info from open-meteo using data from prev website (or default)
     let meteo_url = &make_meteo_url(ip_data);
     let meteo_response: Result<MeteoApiResponse, Error> = request_api(meteo_url);
     let meteo_data = process_api_response(meteo_response, meteo_url);
 
-    match *MODE.lock().unwrap() {
+    // print time stamp in ms if "--runtime-info" was submitted
+    if settings_clone.runtime_info {
+        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
+    }
+
+    match settings_clone.mode {
         Modes::Short => {
             one_line_weather(meteo_data);
         },

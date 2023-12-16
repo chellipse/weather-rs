@@ -33,7 +33,7 @@ pub struct CurrentData {
     pub interval: i32,
     pub temperature_2m: f32,
     pub relative_humidity_2m: i32,
-    pub weather_code: i32,
+    pub weather_code: u8,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
