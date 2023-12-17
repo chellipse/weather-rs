@@ -49,7 +49,7 @@ const DEFAULT_LAT: f32 = 35.9145;
 const DEFAULT_LON: f32 = -78.9225;
 const DEFAULT_TIMEZONE: &str = "America/New_York";
 
-const BAR_MAX: usize = 16;
+const BAR_MAX: usize = 18;
 
 static WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 static BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
@@ -172,15 +172,6 @@ fn process_api_response<T>(input: Result<T, Error>, url: &str) -> T {
     }
 }
 
-// outputs a String with color escapes equal to str + escapes for color rgb
-// fn add_escapes_borrow(str: String, color: Rgb) -> String {
-//     if !SETTINGS.lock().unwrap().no_color {
-//         format!("\x1b[38;2;{};{};{}m{}\x1b[0m", color.r, color.g, color.b, str)
-//     } else {
-//         str
-//     }
-// }
-
 fn add_esc(str: &str, color: &Rgb) -> String {
     if !SETTINGS.lock().unwrap().no_color {
         format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
@@ -236,14 +227,40 @@ fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> St
         _ => "*",
     };
     blocks.push_str(conversion);
-    let result = fill_out(blocks, bar_max);
+    let result = fill_right(blocks, bar_max);
     format!("{}", result)
 }
 
-fn fill_out(msg: String, max: usize) -> String {
+fn fill_right(msg: String, max: usize) -> String {
     let remain = max - msg.chars().count();
     let spaces: String = " ".repeat(remain);
     format!("{}{}", msg, spaces)
+}
+
+fn fill_left(msg: String, max: usize) -> String {
+    let remain = max - msg.chars().count();
+    let spaces: String = " ".repeat(remain);
+    format!("{}{}", spaces, msg)
+}
+
+fn to_am_pm(time: i64) -> String {
+    match time {
+        x if x == 0 => {
+            format!("{}am", time + 12)
+        },
+        x if x > 0 && x <= 11 => {
+            format!("{}am", time)
+        },
+        x if x == 12 => {
+            format!("{}pm", time)
+        },
+        x if x >= 13 && x <= 23 => {
+            format!("{}pm", time - 12)
+        },
+        _ => {
+            format!("{}*", time)
+        },
+    }
 }
 
 // displays hourly weather info for the CLI
@@ -281,7 +298,8 @@ fn long_weather(md: MeteoApiResponse) {
         // hour
         let time_offset = time[i] as i64 + &md.utc_offset_seconds;
         let hour = (time_offset / 3600) % 24; // 3600 seconds in an hour
-        let hour_stdwth = fill_out(hour.to_string(), 2);
+        let am_pm = to_am_pm(hour);
+        let hour_stdwth = fill_left(am_pm.to_string(), 4);
         let hour_format = add_esc(&hour_stdwth, &WHITE);
 
         // temp
@@ -308,19 +326,23 @@ fn long_weather(md: MeteoApiResponse) {
         let format_temp = add_esc(&format!("{:.1}°",temp[i]),&rgb_temp);
 
         // temp bar
-        let low = temp.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-        let high = temp.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
-        let temp_bar = mk_bar(&temp[i], low, high, &1.0, BAR_MAX);
+        let mut low: f32 = *temp.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        let mut high: f32 = *temp.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
+        if high < low + 25.0 {
+            high = low + 20.0;
+            low = low - 5.0;
+        }
+        let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, BAR_MAX);
         let format_temp_bar = add_esc(&format!("{}",temp_bar),&rgb_temp);
 
         // humidity
         let rgb_humid = rgb_lerp(humid[i],30.0,90.0,&WHITE,&DEEP_BLUE);
-        let humid_strwth = fill_out(format!("{}%",humid[i]), 4);
+        let humid_strwth = fill_left(format!("{}%",humid[i]), 4);
         let format_humid = add_esc(&humid_strwth,&rgb_humid);
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i],0.0,100.0,&ICE_BLUE,&DEEP_BLUE);
-        let precip_strwth = fill_out(format!("{}%",precip[i]), 4);
+        let precip_strwth = fill_left(format!("{}%",precip[i]), 4);
         let format_precip = add_esc(&precip_strwth,&rgb_precip);
 
         // precip bar
