@@ -53,9 +53,17 @@ const BAR_MAX: usize = 16;
 
 static WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 static BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
+static L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
+
 static RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
+static ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
+// static BLUE: Rgb = Rgb { r: 0, g: 0, b: 255 };
+static YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
+
+static ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
 static CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
-static BLUE: Rgb = Rgb { r: 0, g: 0, b: 255 };
+static MID_BLUE: Rgb = Rgb { r: 68, g: 99, b: 240 };
+static DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
 
 // ...
 #[tokio::main]
@@ -119,26 +127,26 @@ fn wmo_decode<'a>(wmo: u8) -> String {
     match wmo {
         0 => add_esc(" ~Clear", &CLEAR_BLUE),
         1 => add_esc(" <Clear", &CLEAR_BLUE),
-        2 => add_esc(" ~Cloudy", &CLEAR_BLUE),
-        3 => add_esc(" >Cloudy", &CLEAR_BLUE),
-        44|45 => add_esc(" ~Foggy", &CLEAR_BLUE),
-        48 => add_esc(" Fog+Rime", &CLEAR_BLUE),
+        2 => add_esc(" ~Cloudy", &L_GRAY),
+        3 => add_esc(" >Cloudy", &L_GRAY),
+        44|45 => add_esc(" ~Foggy", &L_GRAY),
+        48 => add_esc(" Fog+Rime", &L_GRAY),
         51 => add_esc(" Drizzling-", &CLEAR_BLUE),
-        53 => add_esc(" Drizzling~", &CLEAR_BLUE),
-        55 => add_esc(" Drizzling+", &CLEAR_BLUE),
+        53 => add_esc(" Drizzling~", &MID_BLUE),
+        55 => add_esc(" Drizzling+", &DEEP_BLUE),
         61 => add_esc(" Raining-", &CLEAR_BLUE),
-        63 => add_esc(" Raining~", &CLEAR_BLUE),
-        65 => add_esc(" Raining+", &CLEAR_BLUE),
+        63 => add_esc(" Raining~", &MID_BLUE),
+        65 => add_esc(" Raining+", &DEEP_BLUE),
         71 => add_esc(" Snowing-", &CLEAR_BLUE),
         73 => add_esc(" Snowing~", &CLEAR_BLUE),
         75 => add_esc(" Snowing+", &CLEAR_BLUE),
         77 => add_esc(" Snow Grains", &CLEAR_BLUE),
         80 => add_esc(" Showers-", &CLEAR_BLUE),
-        81 => add_esc(" Showers~", &CLEAR_BLUE),
-        82 => add_esc(" Showers+", &CLEAR_BLUE),
+        81 => add_esc(" Showers~", &MID_BLUE),
+        82 => add_esc(" Showers+", &DEEP_BLUE),
         85 => add_esc(" Snow Showers-", &CLEAR_BLUE),
         86 => add_esc(" Snow Showers+", &CLEAR_BLUE),
-        95 => add_esc(" Thunderstorm~", &CLEAR_BLUE),
+        95 => add_esc(" Thunderstorm~", &YELLOW),
         0..=9 => add_esc("N/A 0-9", &CLEAR_BLUE),
         10..=19 => add_esc("N/A 10-19", &CLEAR_BLUE),
         20..=29 => add_esc("N/A 20-29", &CLEAR_BLUE),
@@ -175,7 +183,7 @@ fn process_api_response<T>(input: Result<T, Error>, url: &str) -> T {
 
 fn add_esc(str: &str, color: &Rgb) -> String {
     if !SETTINGS.lock().unwrap().no_color {
-        format!("\x1b[38;2;{};{};{}m{}\x1b[0m", color.r, color.g, color.b, str)
+        format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
     } else {
         str.to_string()
     }
@@ -217,13 +225,14 @@ fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> St
     let mut blocks: String = "█".repeat(x as usize);
     let y = x-x.trunc();
     let conversion = match y {
-        x if x >= 0.0 && x < 1.0 / 7.0 => "▏",
-        x if x >= 1.0 / 7.0 && x < 2.0 / 7.0 => "▎",
-        x if x >= 2.0 / 7.0 && x < 3.0 / 7.0 => "▍",
-        x if x >= 3.0 / 7.0 && x < 4.0 / 7.0 => "▌",
-        x if x >= 4.0 / 7.0 && x < 5.0 / 7.0 => "▋",
-        x if x >= 5.0 / 7.0 && x < 6.0 / 7.0 => "▊",
-        x if x >= 6.0 / 7.0 && x < 1.0 => "▉",
+        x if x >= 0.0 && x < 1.0 / 8.0 =>       " ",
+        x if x >= 1.0 / 8.0 && x < 2.0 / 8.0 => "▏",
+        x if x >= 2.0 / 8.0 && x < 3.0 / 8.0 => "▎",
+        x if x >= 3.0 / 8.0 && x < 4.0 / 8.0 => "▍",
+        x if x >= 4.0 / 8.0 && x < 5.0 / 8.0 => "▌",
+        x if x >= 5.0 / 8.0 && x < 6.0 / 8.0 => "▋",
+        x if x >= 6.0 / 8.0 && x < 7.0 / 8.0 => "▊",
+        x if x >= 7.0 / 8.0 && x < 1.0 =>       "▉",
         _ => "*",
     };
     blocks.push_str(conversion);
@@ -262,14 +271,35 @@ fn long_weather(md: MeteoApiResponse) {
     let wmo: Vec<u8> = rm_indices(md.minutely_15.weather_code.clone(), current_time_index, start_time, end_time);
 
     for i in (0..temp.len()).step_by(4) {
+        // hour title
+        if i as u8 == start_time {
+            print!("\x1b[48;2;58;9;66;35;1mNow ");
+        } else {
+            print!("    ");
+        };
+
+        // hour
         let time_offset = time[i] as i64 + &md.utc_offset_seconds;
         let hour = (time_offset / 3600) % 24; // 3600 seconds in an hour
         let hour_stdwth = fill_out(hour.to_string(), 2);
+        let hour_format = add_esc(&hour_stdwth, &WHITE);
 
         // temp
         let rgb_temp: Rgb = match temp[i] {
-            x if (0.0..100.0).contains(&x) => {
-                rgb_lerp(temp[i],20.0,90.0,&BLUE,&RED)
+            x if (90.0..110.0).contains(&x) => {
+                rgb_lerp(temp[i],90.0,110.0,&ORANGE,&RED)
+            },
+            x if (70.0..90.0).contains(&x) => {
+                rgb_lerp(temp[i],70.0,90.0,&WHITE,&ORANGE)
+            },
+            x if (50.0..70.0).contains(&x) => {
+                rgb_lerp(temp[i],50.0,70.0,&ICE_BLUE,&WHITE)
+            },
+            x if (30.0..50.0).contains(&x) => {
+                rgb_lerp(temp[i],30.0,50.0,&CLEAR_BLUE,&ICE_BLUE)
+            },
+            x if (10.0..30.0).contains(&x) => {
+                rgb_lerp(temp[i],10.0,30.0,&DEEP_BLUE,&CLEAR_BLUE)
             },
             _ => {
                 rgb_lerp(temp[i],-100.0,130.0,&BLACK,&WHITE)
@@ -284,12 +314,14 @@ fn long_weather(md: MeteoApiResponse) {
         let format_temp_bar = add_esc(&format!("{}",temp_bar),&rgb_temp);
 
         // humidity
-        let rgb_humid = rgb_lerp(humid[i],20.0,80.0,&WHITE,&CLEAR_BLUE);
-        let format_humid = add_esc(&format!("{}%",humid[i]),&rgb_humid);
+        let rgb_humid = rgb_lerp(humid[i],30.0,90.0,&WHITE,&DEEP_BLUE);
+        let humid_strwth = fill_out(format!("{}%",humid[i]), 4);
+        let format_humid = add_esc(&humid_strwth,&rgb_humid);
 
         // precipitation
-        let rgb_precip = rgb_lerp(precip[i],0.0,100.0,&WHITE,&BLUE);
-        let format_precip = add_esc(&format!("{}%",precip[i]),&rgb_precip);
+        let rgb_precip = rgb_lerp(precip[i],0.0,100.0,&ICE_BLUE,&DEEP_BLUE);
+        let precip_strwth = fill_out(format!("{}%",precip[i]), 4);
+        let format_precip = add_esc(&precip_strwth,&rgb_precip);
 
         // precip bar
         let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, BAR_MAX);
@@ -298,14 +330,14 @@ fn long_weather(md: MeteoApiResponse) {
         // wmo code msg
         let format_wmo = wmo_decode(wmo[i]);
 
-        print!("{}   ", hour_stdwth);
-        print!("{}   ", format_temp);
-        print!("{}   ", format_temp_bar);
-        print!("{}   ", format_humid);
-        print!("{}   ", format_precip);
-        print!("{}   ", format_precip_bar);
-        print!("{}   ", format_wmo);
-        println!("");
+        print!("{}  ", hour_format);
+        print!("{}  ", format_temp);
+        print!("{}  ", format_temp_bar);
+        print!("{}  ", format_humid);
+        print!("{}  ", format_precip);
+        print!("{}  ", format_precip_bar);
+        print!("{}  ", format_wmo);
+        println!("\x1b[0m");
     };
     if SETTINGS.lock().unwrap().runtime_info {
         println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
