@@ -1029,7 +1029,7 @@ checksum = "0d046c5d029ba91a1ed14da14dca44b68bf2f124cfbaf741c54151fdb3e0750b"
 
 [[package]]
 name = "weather"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "lazy_static",
  "reqwest",
