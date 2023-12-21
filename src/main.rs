@@ -4,7 +4,10 @@ use std::env;
 use std::sync::Mutex;
 use lazy_static::lazy_static;
 use serde::de::DeserializeOwned;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::fs;
+use std::path::Path;
+use serde_json::Value;
 
 mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
@@ -21,6 +24,7 @@ struct Settings {
     quiet: bool,
     runtime_info: bool,
     no_color: bool,
+    cache_override: bool,
 }
 
 struct Rgb {
@@ -37,13 +41,26 @@ lazy_static! {
         quiet: false,
         runtime_info: false,
         no_color: false,
+        cache_override: false,
     });
+    static ref SYSTEM_TIME: u64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(n) => {
+            n.as_secs()
+        },
+        Err(_) => {
+            eprintln!("SystemTime before UNIX EPOCH!");
+            0
+        },
+    };
 }
 
 // must be >= 1
 const PAST_DAYS: i32 = 1;
 // must be >= 2
 const FORECAST_DAYS: i32 = 2;
+
+const START_DISPLAY: u8 = 6 * 4;
+const END_DISPLAY: u8 = 24 * 4;
 
 const DEFAULT_LAT: f32 = 35.9145;
 const DEFAULT_LON: f32 = -78.9225;
@@ -57,7 +74,6 @@ static L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
 
 static RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
 static ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
-// static BLUE: Rgb = Rgb { r: 0, g: 0, b: 255 };
 static YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
 
 static ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
@@ -196,11 +212,14 @@ fn rgb_lerp(x: f32, y: f32, z: f32, color1: &Rgb, color2: &Rgb) -> Rgb {
 
 // prints a single line weather update, good for status bars
 fn one_line_weather(md: MeteoApiResponse) {
-    let temp_now = md.current.temperature_2m;
-    let humid_now = md.current.relative_humidity_2m;
+    let time_data = &md.minutely_15.time;
+    let now = get_time_index(time_data) as usize;
+
+    let temp = md.minutely_15.temperature_2m;
+    let humid = md.minutely_15.relative_humidity_2m;
     let precip_max = md.daily.precipitation_probability_max[PAST_DAYS as usize];
-    let wmo_msg_now = wmo_decode(md.current.weather_code);
-    println!("{}° {}% ~{}% {}", temp_now, humid_now, precip_max, wmo_msg_now);
+    let wmo = md.minutely_15.weather_code;
+    println!("{}° {}% ~{}% {}", temp[now], humid[now], precip_max, wmo_decode(wmo[now]));
 }
 
 // removes indices >
@@ -212,7 +231,7 @@ fn rm_indices<T>(input: Vec<T>, current: u8, start: u8, end: u8) -> Vec<T> {
 }
 
 fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
-    let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
+    let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 0.0);
     let mut blocks: String = "█".repeat(x as usize);
     let y = x-x.trunc();
     let conversion = match y {
@@ -232,7 +251,7 @@ fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> St
 }
 
 fn fill_right(msg: String, max: usize) -> String {
-    let remain = max - msg.chars().count();
+    let remain: usize = max - msg.chars().count();
     let spaces: String = " ".repeat(remain);
     format!("{}{}", msg, spaces)
 }
@@ -263,33 +282,43 @@ fn to_am_pm(time: i64) -> String {
     }
 }
 
+// print time stamp in ms if "--runtime-info" was submitted
+fn optional_runtime_update() {
+    if SETTINGS.lock().unwrap().runtime_info {
+        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
+    };
+}
+
+fn get_time_index(time_data: &Vec<u32>) -> u8 {
+    let mut result: u8 = 0 + START_DISPLAY;
+    for (index, time) in time_data.iter().enumerate() {
+        // check for an index within 30min of current system time
+        if (*time as i64 - *SYSTEM_TIME as i64).abs() <= 900 {
+            result = index as u8;
+        }
+    };
+    result
+}
+
 // displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
 
     let time_data = &md.minutely_15.time;
-    let start_time = 6 * 4;
-    let end_time = 24 * 4;
-    let mut current_time_index: u8 = 0 + start_time;
+    let current_time_index = get_time_index(time_data);
 
-    for (index, time) in time_data.iter().enumerate() {
-        if time == &md.current.time {
-            current_time_index = index as u8
-        }
-    };
+    let time: Vec<u32> = rm_indices(md.minutely_15.time.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
-    let time: Vec<u32> = rm_indices(md.minutely_15.time.clone(), current_time_index, start_time, end_time);
+    let temp: Vec<f32> = rm_indices(md.minutely_15.temperature_2m.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
-    let temp: Vec<f32> = rm_indices(md.minutely_15.temperature_2m.clone(), current_time_index, start_time, end_time);
+    let humid: Vec<f32> = rm_indices(md.minutely_15.relative_humidity_2m.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
-    let humid: Vec<f32> = rm_indices(md.minutely_15.relative_humidity_2m.clone(), current_time_index, start_time, end_time);
+    let precip: Vec<f32> = rm_indices(md.minutely_15.precipitation_probability.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
-    let precip: Vec<f32> = rm_indices(md.minutely_15.precipitation_probability.clone(), current_time_index, start_time, end_time);
-
-    let wmo: Vec<u8> = rm_indices(md.minutely_15.weather_code.clone(), current_time_index, start_time, end_time);
+    let wmo: Vec<u8> = rm_indices(md.minutely_15.weather_code.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
     for i in (0..temp.len()).step_by(4) {
         // hour title
-        if i as u8 == start_time {
+        if i as u8 == START_DISPLAY {
             print!("\x1b[48;2;58;9;66;35;1mNow ");
         } else {
             print!("    ");
@@ -329,7 +358,7 @@ fn long_weather(md: MeteoApiResponse) {
         let mut low: f32 = *temp.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
         let mut high: f32 = *temp.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
         if high < low + 25.0 {
-            high = low + 20.0;
+            high = low + 25.0;
             low = low - 5.0;
         }
         let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, BAR_MAX);
@@ -361,9 +390,57 @@ fn long_weather(md: MeteoApiResponse) {
         print!("{}  ", format_wmo);
         println!("\x1b[0m");
     };
-    if SETTINGS.lock().unwrap().runtime_info {
-        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
-    };
+    optional_runtime_update();
+}
+
+fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
+    const CACHE_TIMEOUT: u64 = 900; // 15 minutes in seconds
+
+    if SETTINGS.lock().unwrap().cache_override {
+        return false;
+    }
+
+    match fs::read_to_string(&path) {
+        Ok(json_str) => {
+            match serde_json::from_str::<Value>(&json_str) {
+                Ok(json) => {
+                    match json["current"]["time"].as_u64() {
+                        Some(time) => {
+                            if (time as i64 - *SYSTEM_TIME as i64).abs() as u64 <= CACHE_TIMEOUT {
+                                if !SETTINGS.lock().unwrap().quiet {
+                                    println!("Cache is recent.");
+                                }
+                                true
+                            } else {
+                                if !SETTINGS.lock().unwrap().quiet {
+                                    println!("Cache is outdated.");
+                                }
+                                false
+                            }
+                        }
+                        None => {
+                            if !SETTINGS.lock().unwrap().quiet {
+                                println!("Unknown cache age.");
+                            }
+                            false
+                        },
+                    }
+                }
+                Err(e) => {
+                    if !SETTINGS.lock().unwrap().quiet {
+                        println!("Failed to read cache JSON with err: {}", e);
+                    }
+                    false
+                },
+            }
+        }
+        Err(e) => {
+            if !SETTINGS.lock().unwrap().quiet {
+                println!("Failed to read cache with err: {}", e);
+            }
+            false
+        },
+    }
 }
 
 fn main() {
@@ -371,6 +448,7 @@ fn main() {
         match arg.as_str() {
             "--quiet" | "-q" => SETTINGS.lock().unwrap().quiet = true,
             "--long" | "-l" => SETTINGS.lock().unwrap().mode = Modes::Long,
+            "--force-refresh" | "-f" => SETTINGS.lock().unwrap().cache_override = true,
             "--runtime-info" => SETTINGS.lock().unwrap().runtime_info = true,
             "--no-color" => SETTINGS.lock().unwrap().no_color = true,
             _ => println!("Unrecognized option: {}", arg)
@@ -380,37 +458,52 @@ fn main() {
         let settings = SETTINGS.lock().unwrap();
         (*settings).clone()
     };
-    // print time stamp in ms if "--runtime-info" was submitted
-    if settings_clone.runtime_info {
-        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
-    }
+    optional_runtime_update();
 
-    // get lat, lon, and timezone
-    let ip_url = "http://ip-api.com/json/";
-    let ip_response: Result<IpApiResponse, Error> = request_api(ip_url);
-    let ip_data = process_api_response(ip_response, ip_url);
+    let mut save_location = env::temp_dir();
+    save_location.push("weather_data_cache.json");
 
-    // print time stamp in ms if "--runtime-info" was submitted
-    if settings_clone.runtime_info {
-        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
-    }
+    let weather_data = match is_cache_recent(&save_location) {
+        true => {
+            if !SETTINGS.lock().unwrap().quiet {
+                println!("Using cache.");
+            }
+            let data = fs::read_to_string(&save_location).expect("Unable to read file");
+            serde_json::from_str(&data).expect("JSON was not well-formatted")
+        },
+        false => {
+            // get lat, lon, and timezone
+            let ip_url = "http://ip-api.com/json/";
+            let ip_response: Result<IpApiResponse, Error> = request_api(ip_url);
+            let ip_data = process_api_response(ip_response, ip_url);
+            optional_runtime_update();
 
-    // get weather info from open-meteo using data from prev website (or default)
-    let meteo_url = &make_meteo_url(ip_data);
-    let meteo_response: Result<MeteoApiResponse, Error> = request_api(meteo_url);
-    let meteo_data = process_api_response(meteo_response, meteo_url);
+            // get weather info from open-meteo using data from prev website (or default)
+            let meteo_url = &make_meteo_url(ip_data);
+            let meteo_response: Result<MeteoApiResponse, Error> = request_api(meteo_url);
+            let meteo_data = process_api_response(meteo_response, meteo_url);
+            optional_runtime_update();
 
-    // print time stamp in ms if "--runtime-info" was submitted
-    if settings_clone.runtime_info {
-        println!("Elapsed time: {} ms", START_TIME.lock().unwrap().elapsed().as_millis());
-    }
+            let json = serde_json::to_string(&meteo_data).unwrap();
+            match fs::write(&save_location, json) {
+                Ok(_) => {
+                    println!("Cache saved.");
+                },
+                Err(x) => {
+                    println!("Error saving saving cache: {}", x);
+                }
+            }
+            meteo_data
+        }
+    };
+    optional_runtime_update();
 
     match settings_clone.mode {
         Modes::Short => {
-            one_line_weather(meteo_data);
+            one_line_weather(weather_data);
         },
         Modes::Long => {
-            long_weather(meteo_data);
+            long_weather(weather_data);
         }
     }
 }
