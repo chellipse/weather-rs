@@ -231,7 +231,7 @@ fn rm_indices<T>(input: Vec<T>, current: u8, start: u8, end: u8) -> Vec<T> {
 }
 
 fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
-    let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 0.0);
+    let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
     let mut blocks: String = "█".repeat(x as usize);
     let y = x-x.trunc();
     let conversion = match y {
