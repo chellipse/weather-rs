@@ -67,7 +67,7 @@ const DEFAULT_LAT: f32 = 35.9145;
 const DEFAULT_LON: f32 = -78.9225;
 const DEFAULT_TIMEZONE: &str = "America/New_York";
 
-const BAR_MAX: usize = 6;
+const BAR_MAX: usize = 8;
 
 const HELP_MSG: &str =
 "USAGE: weather [OPTIONS]
@@ -159,39 +159,39 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
 // ...
 fn wmo_decode<'a>(wmo: u8) -> String {
     match wmo {
-        0       => add_fg_esc(" ~Clear      ", &CLEAR_BLUE),
-        1       => add_fg_esc(" <Clear      ", &CLEAR_BLUE),
-        2       => add_fg_esc(" ~Cloudy     ", &L_GRAY),
-        3       => add_fg_esc(" >Cloudy     ", &L_GRAY),
-        44 | 45 => add_fg_esc(" ~Foggy      ", &L_GRAY),
-        48      => add_fg_esc(" Fog+Rime    ", &L_GRAY),
-        51      => add_fg_esc(" Drizzling-  ", &CLEAR_BLUE),
-        53      => add_fg_esc(" Drizzling~  ", &MID_BLUE),
-        55      => add_fg_esc(" Drizzling+  ", &DEEP_BLUE),
-        61      => add_fg_esc(" Raining-    ", &CLEAR_BLUE),
-        63      => add_fg_esc(" Raining~    ", &MID_BLUE),
-        65      => add_fg_esc(" Raining+    ", &DEEP_BLUE),
-        71      => add_fg_esc(" Snowing-    ", &CLEAR_BLUE),
-        73      => add_fg_esc(" Snowing~    ", &CLEAR_BLUE),
-        75      => add_fg_esc(" Snowing+    ", &CLEAR_BLUE),
-        77      => add_fg_esc(" Snow Grains ", &CLEAR_BLUE),
-        80      => add_fg_esc(" Showers-    ", &CLEAR_BLUE),
-        81      => add_fg_esc(" Showers~    ", &MID_BLUE),
-        82      => add_fg_esc(" Showers+    ", &DEEP_BLUE),
-        85      => add_fg_esc(" Snow Showers-  ", &CLEAR_BLUE),
-        86      => add_fg_esc(" Snow Showers+  ", &CLEAR_BLUE),
-        95      => add_fg_esc(" Thunderstorm~ ", &YELLOW),
-        0..=9   => add_fg_esc("N/A 0-9       ", &CLEAR_BLUE),
-        10..=19 => add_fg_esc("N/A 10-19     ", &CLEAR_BLUE),
-        20..=29 => add_fg_esc("N/A 20-29     ", &CLEAR_BLUE),
-        30..=39 => add_fg_esc("N/A 30-39     ", &CLEAR_BLUE),
-        40..=49 => add_fg_esc("N/A 40-49     ", &CLEAR_BLUE),
-        50..=59 => add_fg_esc("N/A 50-59     ", &CLEAR_BLUE),
-        60..=69 => add_fg_esc("N/A 60-69     ", &CLEAR_BLUE),
-        70..=79 => add_fg_esc("N/A 70-79     ", &CLEAR_BLUE),
-        80..=89 => add_fg_esc("N/A 80-89     ", &CLEAR_BLUE),
-        90..=99 => add_fg_esc("N/A 90-99     ", &CLEAR_BLUE),
-        _       => add_fg_esc("N/A           ", &CLEAR_BLUE)
+        0       => add_fg_esc(" ~Clear       ", &CLEAR_BLUE),
+        1       => add_fg_esc(" <Clear       ", &CLEAR_BLUE),
+        2       => add_fg_esc(" ~Cloudy      ", &L_GRAY),
+        3       => add_fg_esc(" >Cloudy      ", &L_GRAY),
+        44 | 45 => add_fg_esc(" ~Foggy       ", &L_GRAY),
+        48      => add_fg_esc(" Fog+Rime     ", &L_GRAY),
+        51      => add_fg_esc(" Drizzling-   ", &CLEAR_BLUE),
+        53      => add_fg_esc(" Drizzling~   ", &MID_BLUE),
+        55      => add_fg_esc(" Drizzling+   ", &DEEP_BLUE),
+        61      => add_fg_esc(" Raining-     ", &CLEAR_BLUE),
+        63      => add_fg_esc(" Raining~     ", &MID_BLUE),
+        65      => add_fg_esc(" Raining+     ", &DEEP_BLUE),
+        71      => add_fg_esc(" Snowing-     ", &CLEAR_BLUE),
+        73      => add_fg_esc(" Snowing~     ", &CLEAR_BLUE),
+        75      => add_fg_esc(" Snowing+     ", &CLEAR_BLUE),
+        77      => add_fg_esc(" Snow Grains  ", &CLEAR_BLUE),
+        80      => add_fg_esc(" Showers-     ", &CLEAR_BLUE),
+        81      => add_fg_esc(" Showers~     ", &MID_BLUE),
+        82      => add_fg_esc(" Showers+     ", &DEEP_BLUE),
+        85      => add_fg_esc(" Snow Showers-", &CLEAR_BLUE),
+        86      => add_fg_esc(" Snow Showers+", &CLEAR_BLUE),
+        95      => add_fg_esc(" Thunderstorm~", &YELLOW),
+        0..=9   => add_fg_esc("N/A 0-9        ", &CLEAR_BLUE),
+        10..=19 => add_fg_esc("N/A 10-19      ", &CLEAR_BLUE),
+        20..=29 => add_fg_esc("N/A 20-29      ", &CLEAR_BLUE),
+        30..=39 => add_fg_esc("N/A 30-39      ", &CLEAR_BLUE),
+        40..=49 => add_fg_esc("N/A 40-49      ", &CLEAR_BLUE),
+        50..=59 => add_fg_esc("N/A 50-59      ", &CLEAR_BLUE),
+        60..=69 => add_fg_esc("N/A 60-69      ", &CLEAR_BLUE),
+        70..=79 => add_fg_esc("N/A 70-79      ", &CLEAR_BLUE),
+        80..=89 => add_fg_esc("N/A 80-89      ", &CLEAR_BLUE),
+        90..=99 => add_fg_esc("N/A 90-99      ", &CLEAR_BLUE),
+        _       => add_fg_esc("N/A            ", &CLEAR_BLUE)
     }
 }
 
@@ -337,8 +337,18 @@ fn get_time_index(time_data: &Vec<u32>) -> u8 {
     result
 }
 
+fn define_dimensions() {
+    match term_size::dimensions() {
+        Some((width, height)) => {
+            println!("Width: {}, Height: {}", width, height);
+        },
+        None => println!("Unable to get terminal size"),
+    }
+}
+
 // displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
+    define_dimensions();
 
     let time_data = &md.minutely_15.time;
     let current_time_index = get_time_index(time_data);
@@ -357,9 +367,9 @@ fn long_weather(md: MeteoApiResponse) {
     for i in (0..temp.len()).step_by(4) {
         // hour title
         if i as u8 == START_DISPLAY {
-            print!("{} ", add_bg_esc("Now", &PURPLE));
+            print!("{} ", add_bg_esc(">", &PURPLE));
         } else {
-            print!("    ");
+            print!("  ");
         };
 
         // hour
@@ -522,13 +532,6 @@ fn main() {
         (*settings).clone()
     };
     optional_runtime_update();
-
-    match term_size::dimensions() {
-        Some((width, height)) => {
-            println!("Width: {}, Height: {}", width, height);
-        },
-        None => println!("Unable to get terminal size"),
-    }
 
     let mut save_location = env::temp_dir();
     save_location.push("weather_data_cache.json");
