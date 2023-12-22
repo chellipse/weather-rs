@@ -35,7 +35,7 @@ struct Rgb {
 }
 
 lazy_static! {
-    static ref MODE: Mutex<Modes> = Mutex::new(Modes::Short); // Default mode
+    // static ref MODE: Mutex<Modes> = Mutex::new(Modes::Short); // Default mode
     static ref START_TIME: Mutex<Instant> = Mutex::new(Instant::now());
     static ref SETTINGS: Mutex<Settings> = Mutex::new(Settings {
         mode: Modes::Short,
@@ -53,6 +53,8 @@ lazy_static! {
             0
         },
     };
+    static ref BAR_MAX: Mutex<usize> = Mutex::new(10);
+    static ref HOURLY_RES: Mutex<usize> = Mutex::new(4);
 }
 
 // must be >= 1
@@ -63,11 +65,11 @@ const FORECAST_DAYS: i32 = 2;
 const START_DISPLAY: u8 = 6 * 4;
 const END_DISPLAY: u8 = 24 * 4;
 
-const DEFAULT_LAT: f32 = 35.9145;
-const DEFAULT_LON: f32 = -78.9225;
+const DEFAULT_LAT: f32 = 40.7128;
+const DEFAULT_LON: f32 = -74.0060;
 const DEFAULT_TIMEZONE: &str = "America/New_York";
 
-const BAR_MAX: usize = 8;
+const BAR_MIN: usize = 10;
 
 const HELP_MSG: &str =
 "USAGE: weather [OPTIONS]
@@ -338,12 +340,39 @@ fn get_time_index(time_data: &Vec<u32>) -> u8 {
 }
 
 fn define_dimensions() {
+    let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 15 + 1;
+    let bar_count: usize = 2;
+    // defaults are the expected minimum
+    let mut w: usize = (BAR_MIN as usize + 1) * bar_count + min_width_without_bars;
+    let mut h: usize = 0;
     match term_size::dimensions() {
         Some((width, height)) => {
-            println!("Width: {}, Height: {}", width, height);
+            w = width as usize;
+            h = height as usize;
         },
         None => println!("Unable to get terminal size"),
     }
+    // println!("{}x{}", w, h, );
+
+    *BAR_MAX.lock().unwrap() = (w - min_width_without_bars - bar_count) / 2;
+
+    let full_res_h: usize = ((START_DISPLAY + END_DISPLAY) / 4) as usize;
+    match h {
+        x if x > full_res_h => { // will use default (4)
+        },
+        x if x <= full_res_h && x > (full_res_h * 2 / 3) => {
+            *HOURLY_RES.lock().unwrap() = 6;
+        },
+        x if x <= (full_res_h * 2 / 3) && x > (full_res_h / 3) => {
+            *HOURLY_RES.lock().unwrap() = 8;
+        },
+        x if x <= (full_res_h / 3) => {
+            *HOURLY_RES.lock().unwrap() = 12;
+        },
+        _ => {}
+    }
+
+    // println!("{} {} {}", *HOURLY_RES.lock().unwrap(), START_DISPLAY/4, END_DISPLAY/4);
 }
 
 // displays hourly weather info for the CLI
@@ -364,7 +393,9 @@ fn long_weather(md: MeteoApiResponse) {
     let wmo: Vec<u8> = rm_indices(md.minutely_15.weather_code.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
     // println!("{}", &md.utc_offset_seconds);
-    for i in (0..temp.len()).step_by(4) {
+    for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
+        // print!("{}", i/4);
+
         // hour title
         if i as u8 == START_DISPLAY {
             print!("{} ", add_bg_esc(">", &PURPLE));
@@ -411,7 +442,7 @@ fn long_weather(md: MeteoApiResponse) {
             high = low + 25.0;
             low = low - 5.0;
         }
-        let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, BAR_MAX);
+        let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX.lock().unwrap());
         let format_temp_bar = add_fg_esc(&format!("{}",temp_bar),&rgb_temp);
         print!("{} ", format_temp_bar);
 
@@ -428,7 +459,7 @@ fn long_weather(md: MeteoApiResponse) {
         print!("{} ", format_precip);
 
         // precip bar
-        let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, BAR_MAX);
+        let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, *BAR_MAX.lock().unwrap());
         let format_precip_bar = add_fg_esc(&format!("{}",precip_bar),&rgb_precip);
         print!("{} ", format_precip_bar);
 
