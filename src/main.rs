@@ -55,6 +55,8 @@ lazy_static! {
     };
     static ref BAR_MAX: Mutex<usize> = Mutex::new(10);
     static ref HOURLY_RES: Mutex<usize> = Mutex::new(4);
+    static ref TERM_WIDTH: Mutex<usize> = Mutex::new(80);
+    static ref TERM_HEIGHT: Mutex<usize> = Mutex::new(32);
 }
 
 // must be >= 1
@@ -85,20 +87,20 @@ OPTIONS
       --runtime-info     Display updates on program speed in ms
 ";
 
-static WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
-static BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
-static L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
+const WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
+const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
+const L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
 
-static RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
-static ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
-static YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
+const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
+const ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
+const YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
 
-static ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
-static CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
-static MID_BLUE: Rgb = Rgb { r: 68, g: 99, b: 240 };
-static DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
+const ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
+const CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
+const MID_BLUE: Rgb = Rgb { r: 68, g: 99, b: 240 };
+const DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
 
-static PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
+const PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
 
 // ...
 #[tokio::main]
@@ -258,6 +260,35 @@ fn rm_indices<T>(input: Vec<T>, current: u8, start: u8, end: u8) -> Vec<T> {
     result
 }
 
+fn adjust_len_right(mut msg: String, max: usize) -> String {
+    let current_length = msg.chars().count();
+
+    if current_length < max {
+        // Add spaces to the right side
+        msg.push_str(&" ".repeat(max - current_length));
+    } else if current_length > max {
+        // Remove characters from the right side
+        msg = msg.chars().take(max).collect();
+    }
+
+    msg
+}
+
+fn adjust_len_left(mut msg: String, max: usize) -> String {
+    let current_length = msg.chars().count();
+
+    if current_length < max {
+        // Add spaces to the left side
+        let spaces = " ".repeat(max - current_length);
+        msg = format!("{}{}", spaces, msg);
+    } else if current_length > max {
+        // Remove characters from the left side
+        msg = msg.chars().skip(current_length - max).collect();
+    }
+
+    msg
+}
+
 fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
     let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
     let mut blocks: String = "█".repeat(x as usize);
@@ -274,30 +305,8 @@ fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> St
         _ => "*",
     };
     blocks.push_str(conversion);
-    let result = fill_right(blocks, bar_max);
+    let result = adjust_len_right(blocks, bar_max);
     format!("{}", result)
-}
-
-fn fill_right(msg: String, max: usize) -> String {
-    let mut remain: usize = 0;
-    if max >= msg.chars().count() {
-        remain = max - msg.chars().count();
-    } else {
-        print!("fill_right() Err: {}-{}", max, msg.chars().count())
-    }
-    let spaces: String = " ".repeat(remain);
-    format!("{}{}", msg, spaces)
-}
-
-fn fill_left(msg: String, max: usize) -> String {
-    let mut remain: usize = 0;
-    if max >= msg.chars().count() {
-        remain = max - msg.chars().count();
-    } else {
-        print!("fill_left() Err: {}-{}", max, msg.chars().count())
-    }
-    let spaces: String = " ".repeat(remain);
-    format!("{}{}", spaces, msg)
 }
 
 fn to_am_pm(time: i64) -> String {
@@ -339,6 +348,7 @@ fn get_time_index(time_data: &Vec<u32>) -> u8 {
     result
 }
 
+// defines global variables about what shape data should be displayed in
 fn define_dimensions() {
     let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 15 + 1;
     let bar_count: usize = 2;
@@ -349,6 +359,8 @@ fn define_dimensions() {
         Some((width, height)) => {
             w = width as usize;
             h = height as usize;
+            *TERM_WIDTH.lock().unwrap() = width;
+            *TERM_HEIGHT.lock().unwrap() = height;
         },
         None => println!("Unable to get terminal size"),
     }
@@ -371,12 +383,11 @@ fn define_dimensions() {
         },
         _ => {}
     }
-
-    // println!("{} {} {}", *HOURLY_RES.lock().unwrap(), START_DISPLAY/4, END_DISPLAY/4);
 }
 
 // displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
+    // defines global variables about what shape data should be displayed in
     define_dimensions();
 
     let time_data = &md.minutely_15.time;
@@ -392,7 +403,6 @@ fn long_weather(md: MeteoApiResponse) {
 
     let wmo: Vec<u8> = rm_indices(md.minutely_15.weather_code.clone(), current_time_index, START_DISPLAY, END_DISPLAY);
 
-    // println!("{}", &md.utc_offset_seconds);
     for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
         // print!("{}", i/4);
 
@@ -407,7 +417,7 @@ fn long_weather(md: MeteoApiResponse) {
         let time_offset = time[i] as i64 + &md.utc_offset_seconds;
         let hour = (time_offset / 3600) % 24; // 3600 seconds in an hour
         let am_pm = to_am_pm(hour);
-        let hour_stdwth = fill_left(am_pm.to_string(), 4);
+        let hour_stdwth = adjust_len_left(am_pm.to_string(), 4);
         let hour_format = add_fg_esc(&hour_stdwth, &WHITE);
         print!("{} ", hour_format);
 
@@ -448,13 +458,13 @@ fn long_weather(md: MeteoApiResponse) {
 
         // humidity
         let rgb_humid = rgb_lerp(humid[i],30.0,90.0,&WHITE,&DEEP_BLUE);
-        let humid_strwth = fill_left(format!("{}%",humid[i]), 4);
+        let humid_strwth = adjust_len_left(format!("{}%",humid[i]), 4);
         let format_humid = add_fg_esc(&humid_strwth,&rgb_humid);
         print!("{} ", format_humid);
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i],0.0,100.0,&ICE_BLUE,&DEEP_BLUE);
-        let precip_strwth = fill_left(format!("{}%",precip[i]), 4);
+        let precip_strwth = adjust_len_left(format!("{}%",precip[i]), 4);
         let format_precip = add_fg_esc(&precip_strwth,&rgb_precip);
         print!("{} ", format_precip);
 
