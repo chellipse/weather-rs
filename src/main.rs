@@ -6,7 +6,7 @@ use lazy_static::lazy_static;
 use serde::de::DeserializeOwned;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use serde_json::Value;
 use std::process;
 
@@ -57,7 +57,14 @@ lazy_static! {
     static ref HOURLY_RES: Mutex<usize> = Mutex::new(4);
     static ref TERM_WIDTH: Mutex<usize> = Mutex::new(80);
     static ref TERM_HEIGHT: Mutex<usize> = Mutex::new(32);
+    static ref SAVE_LOCATION: PathBuf = {
+        let mut temp_dir = env::temp_dir();
+        temp_dir.push("weather_data_cache.json");
+        temp_dir
+    };
 }
+
+const IP_URL: &str = "http://ip-api.com/json/";
 
 // must be >= 1
 const PAST_DAYS: i32 = 1;
@@ -102,6 +109,12 @@ const DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
 
 const PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
 
+fn status_update<S: std::fmt::Display>(msg: S) {
+    if !SETTINGS.lock().unwrap().quiet {
+        println!("{}", msg);
+    }
+}
+
 // ...
 #[tokio::main]
 async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
@@ -110,6 +123,7 @@ async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
     }
 
     let response = reqwest::get(url).await?.json::<T>().await?;
+    optional_runtime_update();
 
     Ok(response)
 }
@@ -196,17 +210,6 @@ fn wmo_decode<'a>(wmo: u8) -> String {
         80..=89 => add_fg_esc("N/A 80-89      ", &CLEAR_BLUE),
         90..=99 => add_fg_esc("N/A 90-99      ", &CLEAR_BLUE),
         _       => add_fg_esc("N/A            ", &CLEAR_BLUE)
-    }
-}
-
-// ...
-fn process_api_response<T>(input: Result<T, Error>, url: &str) -> T {
-    match input {
-        Ok(api_response) => api_response,
-        Err(e) => {
-            eprintln!("Request to \"{}\" failed with error: {}", url, e);
-            std::process::exit(1);
-        },
     }
 }
 
@@ -482,6 +485,7 @@ fn long_weather(md: MeteoApiResponse) {
     optional_runtime_update();
 }
 
+// check if the cache is recent
 fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
     const CACHE_TIMEOUT: u64 = 900; // 15 minutes in seconds
 
@@ -532,6 +536,136 @@ fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
     }
 }
 
+// check if a cache is present
+fn check_cache<P: AsRef<Path>>(path: P) -> bool {
+    if SETTINGS.lock().unwrap().cache_override {
+        return false;
+    }
+    match fs::read_to_string(&path) {
+        Ok(json_str) => {
+            match serde_json::from_str::<Value>(&json_str) {
+                Ok(_) => true,
+                Err(e) => {
+                    if !SETTINGS.lock().unwrap().quiet {
+                        println!("Failed to read cache JSON with err: {}", e);
+                    }
+                    false
+                },
+            }
+        }
+        Err(e) => {
+            if !SETTINGS.lock().unwrap().quiet {
+                println!("Failed to read cache with err: {}", e);
+            }
+            false
+        },
+    }
+}
+
+// func to retreive meteo data
+fn get_meteo_or_ext(ip_object: IpApiResponse) -> MeteoApiResponse {
+    let meteo_url = &make_meteo_url(ip_object);
+    match request_api(meteo_url) {
+        Ok(meteo_data) => {
+            status_update("Data received.");
+            let json = serde_json::to_string(&meteo_data).unwrap();
+            match fs::write(&*SAVE_LOCATION, json) {
+                Ok(_) => {
+                    status_update("Cache saved.");
+                },
+                Err(e) => {
+                    status_update(format!("Err: {}", e));
+                }
+            }
+            meteo_data
+        },
+        Err(e) => {
+            println!("Err: {}", e);
+            println!("No cache or meteo data, exiting...");
+            std::process::exit(1);
+        },
+    }
+}
+
+// func for arms of match statement where there is no usable cache
+fn no_cache_arm() -> MeteoApiResponse {
+    match request_api(&IP_URL) {
+        Ok(ip_data) => {
+            status_update("Data received.");
+            get_meteo_or_ext(ip_data)
+        },
+        Err(e) => {
+            status_update(format!("No data received with Err: {}", e));
+            status_update("Using default.");
+            let ip_default: IpApiResponse = IpApiResponse {
+                status: String::from("default"),
+                lat: Some(DEFAULT_LAT),
+                lon: Some(DEFAULT_LON),
+                timezone: Some(String::from(DEFAULT_TIMEZONE)),
+            };
+            get_meteo_or_ext(ip_default)
+        },
+    }
+}
+
+fn get_cache<E>() -> Result<MeteoApiResponse, E>
+where
+    E: From<std::io::Error>, // E can be created from io::Error
+    E: From<serde_json::Error>, // E can be created from serde_json::Error
+{
+    match fs::read_to_string(&*SAVE_LOCATION) {
+        // cache readable
+        Ok(data) => {
+            match serde_json::from_str(&data) {
+                Ok(valid_data) => Ok(valid_data),
+                Err(e) => {
+                    Err(e.into())
+                },
+            }
+        },
+        // cache unreadable
+        Err(e) => {
+            Err(e.into())
+        },
+    }
+}
+
+fn use_cache() -> MeteoApiResponse {
+    status_update("Using Cache.");
+    match get_cache::<Box<dyn std::error::Error>>() {
+        // cache readable
+        Ok(valid_data) => valid_data,
+        // cache unreadable
+        Err(e) => {
+            status_update(format!("Cache unreadable with Err: {}", e));
+            no_cache_arm()
+        },
+    }
+}
+
+fn get_meteo_or_cache(ip_object: IpApiResponse) -> MeteoApiResponse {
+    let meteo_url = &make_meteo_url(ip_object);
+    match request_api(meteo_url) {
+        Ok(meteo_data) => {
+            status_update("Data received.");
+            let json = serde_json::to_string(&meteo_data).unwrap();
+            match fs::write(&*SAVE_LOCATION, json) {
+                Ok(_) => {
+                    status_update("Cache saved.");
+                },
+                Err(e) => {
+                    status_update(format!("Err: {}", e));
+                }
+            }
+            meteo_data
+        },
+        Err(e) => {
+            println!("Err: {}", e);
+            use_cache()
+        },
+    }
+}
+
 fn main() {
     // set options in SETTINGS struct based on args
     for arg in env::args().skip(1) {
@@ -574,45 +708,52 @@ fn main() {
     };
     optional_runtime_update();
 
-    let mut save_location = env::temp_dir();
-    save_location.push("weather_data_cache.json");
-
-    let weather_data = match is_cache_recent(&save_location) {
+    let weather_data: MeteoApiResponse = match check_cache(&*SAVE_LOCATION) {
+        // cache exists
         true => {
-            if !SETTINGS.lock().unwrap().quiet {
-                println!("Using cache.");
-            }
-            let data = fs::read_to_string(&save_location).expect("Unable to read file");
-            serde_json::from_str(&data).expect("JSON was not well-formatted")
-        },
-        false => {
-            // get lat, lon, and timezone
-            let ip_url = "http://ip-api.com/json/";
-            let ip_response: Result<IpApiResponse, Error> = request_api(ip_url);
-            let ip_data = process_api_response(ip_response, ip_url);
-            optional_runtime_update();
-
-            // get weather info from open-meteo using data from prev website (or default)
-            let meteo_url = &make_meteo_url(ip_data);
-            let meteo_response: Result<MeteoApiResponse, Error> = request_api(meteo_url);
-            let meteo_data = process_api_response(meteo_response, meteo_url);
-            optional_runtime_update();
-
-            let json = serde_json::to_string(&meteo_data).unwrap();
-            match fs::write(&save_location, json) {
-                Ok(_) => {
-                    if !SETTINGS.lock().unwrap().quiet {
-                        println!("Cache saved.");
+            match is_cache_recent(&*SAVE_LOCATION) {
+                // cache is recent
+                true => {
+                    use_cache()
+                },
+                // cache is old
+                false => {
+                    match request_api(&IP_URL) {
+                        // ip data received
+                        Ok(ip_data) => {
+                            status_update("Data received.");
+                            get_meteo_or_ext(ip_data)
+                        },
+                        // no ip data recieved
+                        Err(e) => {
+                            status_update(format!("No data received with Err: {}", e));
+                            match get_cache::<Box<dyn std::error::Error>>() {
+                                // cache readable
+                                Ok(save_data) => {
+                                    let ip_cache: IpApiResponse = IpApiResponse {
+                                        status: String::from("cache"),
+                                        lat: Some(save_data.latitude),
+                                        lon: Some(save_data.longitude),
+                                        timezone: Some(save_data.timezone),
+                                    };
+                                    get_meteo_or_cache(ip_cache)
+                                },
+                                // cache unreadable
+                                Err(e) => {
+                                    status_update(format!("Cache unreadable with Err: {}", e));
+                                    no_cache_arm()
+                                },
+                            }
+                        },
                     }
                 },
-                Err(x) => {
-                    if !SETTINGS.lock().unwrap().quiet {
-                        println!("Error saving saving cache: {}", x);
-                    }
-                }
             }
-            meteo_data
-        }
+        },
+        // cache does not exist
+        false => {
+            status_update("No cache found.");
+            no_cache_arm()
+        },
     };
     optional_runtime_update();
 
