@@ -1,4 +1,5 @@
 // rust weather script
+#![allow(clippy::match_bool)]
 use lazy_static::lazy_static;
 use reqwest::Error;
 use serde::de::DeserializeOwned;
@@ -108,7 +109,7 @@ const PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
 
 fn status_update<S: std::fmt::Display>(msg: S) {
     if !SETTINGS.lock().unwrap().quiet {
-        println!("{}", msg);
+        println!("{msg}");
     }
 }
 
@@ -286,7 +287,7 @@ fn adjust_len_left(mut msg: String, max: usize) -> String {
         Ordering::Less => {
             // Add spaces to the left side
             let spaces = " ".repeat(max - current_length);
-            msg = format!("{}{}", spaces, msg);
+            msg = format!("{spaces}{msg}");
         }
         Ordering::Greater => {
             // Remove characters from the left side
@@ -324,16 +325,16 @@ fn to_am_pm(time: i64) -> String {
             format!("{}am", time + 12)
         }
         x if x > 0 && x <= 11 => {
-            format!("{}am", time)
+            format!("{time}am")
         }
         12 => {
-            format!("{}pm", time)
+            format!("{time}pm")
         }
         x if (13..=23).contains(&x) => {
             format!("{}pm", time - 12)
         }
         _ => {
-            format!("{}*", time)
+            format!("{time}*")
         }
     }
 }
@@ -429,7 +430,7 @@ fn long_weather(md: MeteoApiResponse) {
         let am_pm = to_am_pm(hour);
         let hour_stdwth = adjust_len_left(am_pm.to_string(), 4);
         let hour_format = add_fg_esc(&hour_stdwth, &WHITE);
-        print!("{} ", hour_format);
+        print!("{hour_format} ");
 
         // temp
         let rgb_temp: Rgb = match temp[i] {
@@ -443,7 +444,7 @@ fn long_weather(md: MeteoApiResponse) {
             _ => rgb_lerp(temp[i], -100.0, 130.0, &BLACK, &WHITE),
         };
         let format_temp = add_fg_esc(&format!("{:.1}°", temp[i]), &rgb_temp);
-        print!("{} ", format_temp);
+        print!("{format_temp} ");
 
         // temp bar
         let mut low: f32 = *temp
@@ -460,28 +461,28 @@ fn long_weather(md: MeteoApiResponse) {
         }
         let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX.lock().unwrap());
         let format_temp_bar = add_fg_esc(&temp_bar.to_string(), &rgb_temp);
-        print!("{} ", format_temp_bar);
+        print!("{format_temp_bar} ");
 
         // humidity
         let rgb_humid = rgb_lerp(humid[i], 30.0, 90.0, &WHITE, &DEEP_BLUE);
         let humid_strwth = adjust_len_left(format!("{}%", humid[i]), 4);
         let format_humid = add_fg_esc(&humid_strwth, &rgb_humid);
-        print!("{} ", format_humid);
+        print!("{format_humid} ");
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i], 0.0, 100.0, &ICE_BLUE, &DEEP_BLUE);
         let precip_strwth = adjust_len_left(format!("{}%", precip[i]), 4);
         let format_precip = add_fg_esc(&precip_strwth, &rgb_precip);
-        print!("{} ", format_precip);
+        print!("{format_precip} ");
 
         // precip bar
         let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, *BAR_MAX.lock().unwrap());
         let format_precip_bar = add_fg_esc(&precip_bar.to_string(), &rgb_precip);
-        print!("{} ", format_precip_bar);
+        print!("{format_precip_bar} ");
 
         // wmo code msg
         let format_wmo = wmo_decode(wmo[i]);
-        print!("{} ", format_wmo);
+        print!("{format_wmo} ");
 
         println!("\x1b[0m");
     }
@@ -521,14 +522,14 @@ fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
             },
             Err(e) => {
                 if !SETTINGS.lock().unwrap().quiet {
-                    println!("Failed to read cache JSON with err: {}", e);
+                    println!("Failed to read cache JSON with err: {e}");
                 }
                 false
             }
         },
         Err(e) => {
             if !SETTINGS.lock().unwrap().quiet {
-                println!("Failed to read cache with err: {}", e);
+                println!("Failed to read cache with err: {e}");
             }
             false
         }
@@ -545,14 +546,14 @@ fn check_cache<P: AsRef<Path>>(path: P) -> bool {
             Ok(_) => true,
             Err(e) => {
                 if !SETTINGS.lock().unwrap().quiet {
-                    println!("Failed to read cache JSON with err: {}", e);
+                    println!("Failed to read cache JSON with err: {e}");
                 }
                 false
             }
         },
         Err(e) => {
             if !SETTINGS.lock().unwrap().quiet {
-                println!("Failed to read cache with err: {}", e);
+                println!("Failed to read cache with err: {e}");
             }
             false
         }
@@ -571,13 +572,13 @@ fn get_meteo_or_ext(ip_object: IpApiResponse) -> MeteoApiResponse {
                     status_update("Cache saved.");
                 }
                 Err(e) => {
-                    status_update(format!("Err: {}", e));
+                    status_update(format!("Err: {e}"));
                 }
             }
             meteo_data
         }
         Err(e) => {
-            println!("Err: {}", e);
+            println!("Err: {e}");
             println!("No cache or meteo data, exiting...");
             std::process::exit(1);
         }
@@ -592,7 +593,7 @@ fn no_cache_arm() -> MeteoApiResponse {
             get_meteo_or_ext(ip_data)
         }
         Err(e) => {
-            status_update(format!("No data received with Err: {}", e));
+            status_update(format!("No data received with Err: {e}"));
             status_update("Using default.");
             let ip_default: IpApiResponse = IpApiResponse {
                 status: String::from("default"),
@@ -628,7 +629,7 @@ fn use_cache() -> MeteoApiResponse {
         Ok(valid_data) => valid_data,
         // cache unreadable
         Err(e) => {
-            status_update(format!("Cache unreadable with Err: {}", e));
+            status_update(format!("Cache unreadable with Err: {e}"));
             no_cache_arm()
         }
     }
@@ -645,13 +646,13 @@ fn get_meteo_or_cache(ip_object: IpApiResponse) -> MeteoApiResponse {
                     status_update("Cache saved.");
                 }
                 Err(e) => {
-                    status_update(format!("Err: {}", e));
+                    status_update(format!("Err: {e}"));
                 }
             }
             meteo_data
         }
         Err(e) => {
-            println!("Err: {}", e);
+            println!("Err: {e}");
             use_cache()
         }
     }
@@ -665,13 +666,13 @@ fn main() {
             "--version" => {
                 let pkg_name = env!("CARGO_PKG_NAME");
                 let version = env!("CARGO_PKG_VERSION");
-                println!("{}: {}", pkg_name, version);
+                println!("{pkg_name}: {version}");
                 process::exit(0);
             }
             "--help" => {
                 let pkg_name = env!("CARGO_PKG_NAME");
                 let version = env!("CARGO_PKG_VERSION");
-                print!("{}: {}\n{}", pkg_name, version, HELP_MSG);
+                print!("{pkg_name}: {version}\n{HELP_MSG}");
                 process::exit(0);
             }
             "--quiet" => SETTINGS.lock().unwrap().quiet = true,
@@ -680,7 +681,7 @@ fn main() {
             "--runtime-info" => SETTINGS.lock().unwrap().runtime_info = true,
             "--no-color" => SETTINGS.lock().unwrap().no_color = true,
             arg if arg.starts_with("--") => {
-                println!("Unrecognized option: {}", arg);
+                println!("Unrecognized option: {arg}");
                 process::exit(0);
             }
             arg if arg.starts_with('-') => {
@@ -690,14 +691,14 @@ fn main() {
                         'l' => SETTINGS.lock().unwrap().mode = Modes::Long,
                         'f' => SETTINGS.lock().unwrap().cache_override = true,
                         _ => {
-                            println!("Unrecognized option: -{}", char);
+                            println!("Unrecognized option: -{char}");
                             process::exit(0);
                         }
                     }
                 }
             }
             _ => {
-                println!("Unrecognized option: {}", arg);
+                println!("Unrecognized option: {arg}");
                 process::exit(0);
             }
         }
@@ -724,7 +725,7 @@ fn main() {
                         }
                         // no ip data recieved
                         Err(e) => {
-                            status_update(format!("No data received with Err: {}", e));
+                            status_update(format!("No data received with Err: {e}"));
                             match get_cache::<Box<dyn std::error::Error>>() {
                                 // cache readable
                                 Ok(save_data) => {
@@ -738,7 +739,7 @@ fn main() {
                                 }
                                 // cache unreadable
                                 Err(e) => {
-                                    status_update(format!("Cache unreadable with Err: {}", e));
+                                    status_update(format!("Cache unreadable with Err: {e}"));
                                     no_cache_arm()
                                 }
                             }
