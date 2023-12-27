@@ -94,48 +94,16 @@ OPTIONS
       --runtime-info     Display updates on program speed in ms
 ";
 
-const WHITE: Rgb = Rgb {
-    r: 222,
-    g: 222,
-    b: 222,
-};
+const WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
-const L_GRAY: Rgb = Rgb {
-    r: 180,
-    g: 180,
-    b: 180,
-};
+const L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
 const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
-const ORANGE: Rgb = Rgb {
-    r: 255,
-    g: 128,
-    b: 0,
-};
-const YELLOW: Rgb = Rgb {
-    r: 255,
-    g: 233,
-    b: 102,
-};
-const ICE_BLUE: Rgb = Rgb {
-    r: 157,
-    g: 235,
-    b: 255,
-};
-const CLEAR_BLUE: Rgb = Rgb {
-    r: 92,
-    g: 119,
-    b: 242,
-};
-const MID_BLUE: Rgb = Rgb {
-    r: 68,
-    g: 99,
-    b: 240,
-};
-const DEEP_BLUE: Rgb = Rgb {
-    r: 45,
-    g: 80,
-    b: 238,
-};
+const ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
+const YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
+const ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
+const CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
+const MID_BLUE: Rgb = Rgb { r: 68, g: 99, b: 240 };
+const DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
 const PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
 
 fn status_update<S: std::fmt::Display>(msg: S) {
@@ -206,6 +174,7 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
 }
 
 // ...
+#[allow(clippy::match_overlapping_arm)]
 fn wmo_decode(wmo: u8) -> String {
     match wmo {
         0 => add_fg_esc(" ~Clear       ", &CLEAR_BLUE),
