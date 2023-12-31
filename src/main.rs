@@ -37,8 +37,9 @@ struct Rgb {
 }
 
 lazy_static! {
-    // static ref MODE: Mutex<Modes> = Mutex::new(Modes::Short); // Default mode
+    // used for tracking with option --runtime-info
     static ref START_TIME: Mutex<Instant> = Mutex::new(Instant::now());
+    // struct used for storing settings
     static ref SETTINGS: Mutex<Settings> = Mutex::new(Settings {
         mode: Modes::Short,
         quiet: false,
@@ -55,10 +56,15 @@ lazy_static! {
             0
         },
     };
+    // maximum bar width
     static ref BAR_MAX: Mutex<usize> = Mutex::new(10);
+    // default hourly resolution (4 because data is 15 minutely)
     static ref HOURLY_RES: Mutex<usize> = Mutex::new(4);
+    // default term width
     static ref TERM_WIDTH: Mutex<usize> = Mutex::new(80);
+    // default term height
     static ref TERM_HEIGHT: Mutex<usize> = Mutex::new(32);
+    // location to save weather data
     static ref SAVE_LOCATION: PathBuf = {
         let mut temp_dir = env::temp_dir();
         temp_dir.push("weather_data_cache.json");
@@ -66,20 +72,24 @@ lazy_static! {
     };
 }
 
+// url for ip-api
 const IP_URL: &str = "http://ip-api.com/json/";
 
-// must be >= 1
+// days worth of past data to request, must be >= 1
 const PAST_DAYS: i32 = 1;
-// must be >= 2
+// days of future data to request, must be >= 2
 const FORECAST_DAYS: i32 = 2;
 
+// prev and future hours to display with --long or -l, * 4 because 15 minutely
 const START_DISPLAY: usize = 6 * 4;
 const END_DISPLAY: usize = 24 * 4;
 
+// default location and timezone
 const DEFAULT_LAT: f32 = 40.7128;
 const DEFAULT_LON: f32 = -74.0060;
 const DEFAULT_TIMEZONE: &str = "America/New_York";
 
+// minimum bar width
 const BAR_MIN: usize = 10;
 
 const HELP_MSG: &str = "USAGE: weather [OPTIONS]
@@ -95,6 +105,7 @@ OPTIONS
       --runtime-info     Display updates on program speed in ms
 ";
 
+// colors to use with rgb_lerp
 const WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 const L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
@@ -107,13 +118,14 @@ const MID_BLUE: Rgb = Rgb { r: 68, g: 99, b: 240 };
 const DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
 const PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
 
+// program status updates! if -q or --quiet are passed SETTINGS.quiet = true
 fn status_update<S: std::fmt::Display>(msg: S) {
     if !SETTINGS.lock().unwrap().quiet {
         println!("{msg}");
     }
 }
 
-// ...
+// request data from a website
 #[tokio::main]
 async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
     if !SETTINGS.lock().unwrap().quiet {
@@ -129,7 +141,7 @@ async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
     Ok(response)
 }
 
-// ...
+// make a url to request for OpenMeteo
 fn make_meteo_url(ip_data: IpApiResponse) -> String {
     let lat = match ip_data.lat {
         Some(value) => value,
@@ -174,7 +186,7 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
     url
 }
 
-// ...
+// turn WMO codes into a message
 #[allow(clippy::match_overlapping_arm)]
 fn wmo_decode(wmo: u8) -> String {
     match wmo {
@@ -214,6 +226,7 @@ fn wmo_decode(wmo: u8) -> String {
     }
 }
 
+// add an escape sequence to a &str for the foreground color
 fn add_fg_esc(str: &str, color: &Rgb) -> String {
     if !SETTINGS.lock().unwrap().no_color {
         format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
@@ -222,6 +235,7 @@ fn add_fg_esc(str: &str, color: &Rgb) -> String {
     }
 }
 
+// add an escape sequence to a &str for the background color
 fn add_bg_esc(str: &str, color: &Rgb) -> String {
     if !SETTINGS.lock().unwrap().no_color {
         format!("\x1b[48;2;{};{};{}m{}", color.r, color.g, color.b, str)
@@ -262,6 +276,7 @@ fn one_line_weather(md: MeteoApiResponse) {
     );
 }
 
+// add or remove characters from the right until len == max
 fn adjust_len_right(mut msg: String, max: usize) -> String {
     let current_length = msg.chars().count();
 
@@ -280,6 +295,7 @@ fn adjust_len_right(mut msg: String, max: usize) -> String {
     msg
 }
 
+// add or remove characters from the left until len == max
 fn adjust_len_left(mut msg: String, max: usize) -> String {
     let current_length = msg.chars().count();
 
@@ -299,6 +315,7 @@ fn adjust_len_left(mut msg: String, max: usize) -> String {
     msg
 }
 
+// makes a bar as val moves between low and high
 fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
     let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
     let mut blocks: String = "█".repeat(x as usize);
@@ -319,6 +336,7 @@ fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> St
     result.to_string()
 }
 
+// turns a 24hr time into am/pm
 fn to_am_pm(time: i64) -> String {
     match time {
         0 => {
@@ -349,10 +367,11 @@ fn optional_runtime_update() {
     };
 }
 
+// checks which Unix timestamp is within 15min of system time
 fn get_time_index(time_data: &[u32]) -> usize {
     let mut result = START_DISPLAY;
     for (index, time) in time_data.iter().enumerate() {
-        // check for an index within 30min of current system time
+        // check for an index within 15min of current system time
         if *SYSTEM_TIME as i64 - *time as i64 >= 0 && *SYSTEM_TIME as i64 - *time as i64 <= 900 {
             result = index;
         }
@@ -361,6 +380,7 @@ fn get_time_index(time_data: &[u32]) -> usize {
 }
 
 // defines global variables about what shape data should be displayed in
+// using term height and width
 fn define_dimensions() {
     let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 15 + 1;
     let bar_count: usize = 2;
@@ -415,8 +435,6 @@ fn long_weather(md: MeteoApiResponse) {
     let wmo = &md.minutely_15.weather_code[start..end];
 
     for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
-        // print!("{}", i/4);
-
         // hour title
         if i == START_DISPLAY {
             print!("{} ", add_bg_esc(">", &PURPLE));
@@ -606,6 +624,7 @@ fn no_cache_arm() -> MeteoApiResponse {
     }
 }
 
+// retrieve the cache
 fn get_cache<E>() -> Result<MeteoApiResponse, E>
 where
     E: From<std::io::Error>,    // E can be created from io::Error
@@ -622,6 +641,7 @@ where
     }
 }
 
+// return the cache as data
 fn use_cache() -> MeteoApiResponse {
     status_update("Using Cache.");
     match get_cache::<Box<dyn std::error::Error>>() {
@@ -635,6 +655,7 @@ fn use_cache() -> MeteoApiResponse {
     }
 }
 
+// gets fresh Meteo data or uses the cache, depending on cache age
 fn get_meteo_or_cache(ip_object: IpApiResponse) -> MeteoApiResponse {
     let meteo_url = &make_meteo_url(ip_object);
     match request_api(meteo_url) {
