@@ -1,4 +1,4 @@
-## CLI program to display weather data.
+## CLI program to display current weather data.
 
 Primarily meant to be used as a status bar module, however there's CLI functionality as well.
 
