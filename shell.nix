@@ -1,23 +1,32 @@
-{ pkgs ? import <nixpkgs> {} }:
-pkgs.mkShell {
-  nativeBuildInputs = with pkgs; [
-    ### nix stuff
+let
+  rust_overlay = import (builtins.fetchTarball "https://github.com/oxalica/rust-overlay/archive/master.tar.gz");
+
+  pkgs = import <nixos-23.11> { overlays = [ rust_overlay ]; };
+  unstable = import <nixos-unstable> { overlays = [ rust_overlay ]; };
+
+  rust = unstable.rust-bin.stable.latest.default.override {
+      extensions = [ "rust-src" ];
+  };
+
+  # rust = unstable.rust-bin.beta.latest.default.override {
+    # extensions = [ "rust-src" "rust-analyzer" ];
+  # };
+
+  # rust = unstable.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
+  #   extensions = [ "rust-src" ];
+  # });
+
+in
+  pkgs.mkShell {
+    nativeBuildInputs = with unstable; [
     nixd
-    ### rust
     gcc
-    rustc
-    cargo
+    rust
     rust-analyzer
-    rustfmt
-    clippy
-    ### dep
+    # dep
     openssl
     pkg-config
   ];
-
-  shellHook = ''
-    echo "Gcc $(gcc --version | head -n 1 | awk '{print $3}'), Rustc $(rustc --version | awk '{print $2}'), "
-  '';
 
   # Certain Rust tools won't work without this
   # This can also be fixed by using oxalica/rust-overlay and specifying the rust-src extension

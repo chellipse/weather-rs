@@ -508,8 +508,10 @@ fn long_weather(md: MeteoApiResponse) {
 }
 
 // check if the cache is recent
+// returns True if the absolute difference between SYSTEM_TIME and cache.current.time
+// is <= CACHE_TIMEOUT
 fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
-    const CACHE_TIMEOUT: u64 = 900; // 15 minutes in seconds
+    const CACHE_TIMEOUT: u64 = 1800; // 60 minutes in seconds
 
     if SETTINGS.lock().unwrap().cache_override {
         return false;

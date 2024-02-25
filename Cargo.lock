@@ -1038,8 +1038,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d046c5d029ba91a1ed14da14dca44b68bf2f124cfbaf741c54151fdb3e0750b"
 
 [[package]]
-name = "weather"
-version = "0.3.0"
+name = "weather-rs"
+version = "0.3.1"
 dependencies = [
  "lazy_static",
  "reqwest",
