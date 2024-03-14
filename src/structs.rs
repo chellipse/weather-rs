@@ -45,6 +45,7 @@ pub struct HourlyData {
     pub precipitation_probability: Vec<f32>,
     pub weather_code: Vec<u8>,
     pub wind_speed_10m: Vec<f32>,
+    pub wind_direction_10m: Vec<i16>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -56,6 +57,7 @@ pub struct FifteenMinutely {
     pub precipitation_probability: Vec<f32>,
     pub weather_code: Vec<u8>,
     pub wind_speed_10m: Vec<f32>,
+    pub wind_direction_10m: Vec<i16>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -41,7 +41,7 @@ lazy_static! {
     static ref START_TIME: Mutex<Instant> = Mutex::new(Instant::now());
     // struct used for storing settings
     static ref SETTINGS: Mutex<Settings> = Mutex::new(Settings {
-        mode: Modes::Short,
+        mode: Modes::Long,
         quiet: false,
         runtime_info: false,
         no_color: false,
@@ -109,14 +109,21 @@ OPTIONS
 const WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 const L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
-const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
-const ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
+// const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
+// const ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
 const YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
 const ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
 const CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
 const MID_BLUE: Rgb = Rgb { r: 68, g: 99, b: 240 };
 const DEEP_BLUE: Rgb = Rgb { r: 45, g: 80, b: 238 };
 const PURPLE: Rgb = Rgb { r: 58, g: 9, b: 66 };
+
+const OG0: Rgb = Rgb { r: 255, g: 255, b: 255 };
+const OG1: Rgb = Rgb { r: 79, g: 185, b: 243 };
+const OG2: Rgb = Rgb { r: 74, g: 137, b: 135 };
+const OG3: Rgb = Rgb { r: 229, g: 219, b: 93 };
+const OG4: Rgb = Rgb { r: 249, g: 203, b: 49 };
+const OG5: Rgb = Rgb { r: 209, g: 68, b: 12 };
 
 // program status updates! if -q or --quiet are passed SETTINGS.quiet = true
 fn status_update<S: std::fmt::Display>(msg: S) {
@@ -172,10 +179,11 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             "latitude={}&", // <--
             "longitude={}&", // <--
             "current=temperature_2m,relative_humidity_2m,weather_code&",
-            "hourly=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m&",
-            "minutely_15=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m&",
+            "hourly=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
+            "minutely_15=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max&",
             "temperature_unit=fahrenheit&",
+            "wind_speed_unit=mph&",
             "timeformat=unixtime&",
             "timezone={}&", // <--
             "past_days={}&", // <--
@@ -266,13 +274,20 @@ fn one_line_weather(md: MeteoApiResponse) {
     let temp = md.minutely_15.temperature_2m;
     let humid = md.minutely_15.relative_humidity_2m;
     let precip_max = md.daily.precipitation_probability_max[PAST_DAYS as usize];
+    let wind_format = {
+        let wind_spd = md.minutely_15.wind_speed_10m[now];
+        let wind_di = md.minutely_15.wind_direction_10m[now];
+        let direction = wind_di_decode(wind_di);
+        format!("{1:.0}°/{0:2}", direction, wind_spd)
+    };
     let wmo = md.minutely_15.weather_code;
     println!(
-        "{}° {}% ~{}% {}",
+        "{}° {}% ~{}% {:.8} {}",
         temp[now],
         humid[now],
         precip_max,
-        wmo_decode(wmo[now])
+        wmo_decode(wmo[now]),
+        wind_format,
     );
 }
 
@@ -383,13 +398,14 @@ fn get_time_index(time_data: &[u32]) -> usize {
 // using term height and width
 fn define_dimensions() {
     let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 15 + 1;
+    let max_width = 80;
     let bar_count: usize = 2;
     // defaults are the expected minimum
     let mut w: usize = (BAR_MIN + 1) * bar_count + min_width_without_bars;
     let mut h: usize = 0;
     match term_size::dimensions() {
         Some((width, height)) => {
-            w = width;
+            if width < max_width {w = width} else {w = max_width};
             h = height;
             *TERM_WIDTH.lock().unwrap() = width;
             *TERM_HEIGHT.lock().unwrap() = height;
@@ -417,6 +433,24 @@ fn define_dimensions() {
     }
 }
 
+fn wind_di_decode(di: i16) -> &'static str {
+    match di as f32 {
+        x if (337.5..=360.0).contains(&x) => {"N"},
+        x if (0.0..=22.5).contains(&x) => {"N"},
+        x if (22.5..=67.5).contains(&x) => {"NE"},
+        x if (67.5..=112.5).contains(&x) => {"E"},
+        x if (112.5..=157.5).contains(&x) => {"SE"},
+        x if (157.5..=202.5).contains(&x) => {"S"},
+        x if (202.5..=247.5).contains(&x) => {"SW"},
+        x if (247.5..=292.5).contains(&x) => {"W"},
+        x if (292.5..=337.5).contains(&x) => {"NW"},
+        x => {
+            eprintln!("Unhandled Wind Direction: {:?}", x);
+            ""
+        }
+    }
+}
+
 // displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
     // defines global variables about what shape data should be displayed in
@@ -432,6 +466,8 @@ fn long_weather(md: MeteoApiResponse) {
     let temp = &md.minutely_15.temperature_2m[start..end];
     let humid = &md.minutely_15.relative_humidity_2m[start..end];
     let precip = &md.minutely_15.precipitation_probability[start..end];
+    let wind_spd = &md.minutely_15.wind_speed_10m[start..end];
+    let wind_di = &md.minutely_15.wind_direction_10m[start..end];
     let wmo = &md.minutely_15.weather_code[start..end];
 
     for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
@@ -452,12 +488,12 @@ fn long_weather(md: MeteoApiResponse) {
 
         // temp
         let rgb_temp: Rgb = match temp[i] {
-            x if (90.0..110.0).contains(&x) => rgb_lerp(temp[i], 90.0, 110.0, &ORANGE, &RED),
-            x if (70.0..90.0).contains(&x) => rgb_lerp(temp[i], 70.0, 90.0, &WHITE, &ORANGE),
-            x if (50.0..70.0).contains(&x) => rgb_lerp(temp[i], 50.0, 70.0, &ICE_BLUE, &WHITE),
-            x if (30.0..50.0).contains(&x) => rgb_lerp(temp[i], 30.0, 50.0, &CLEAR_BLUE, &ICE_BLUE),
-            x if (10.0..30.0).contains(&x) => {
-                rgb_lerp(temp[i], 10.0, 30.0, &DEEP_BLUE, &CLEAR_BLUE)
+            x if (105.0..130.0).contains(&x) => rgb_lerp(temp[i], 105.0, 130.0, &OG4, &OG5),
+            x if (80.0..105.0).contains(&x) => rgb_lerp(temp[i], 80.0, 105.0, &OG3, &OG4),
+            x if (50.0..80.0).contains(&x) => rgb_lerp(temp[i], 50.0, 80.0, &OG2, &OG3),
+            x if (32.0..50.0).contains(&x) => rgb_lerp(temp[i], 32.0, 50.0, &OG1, &OG2),
+            x if (10.0..32.0).contains(&x) => {
+                rgb_lerp(temp[i], 10.0, 32.0, &OG0, &OG1)
             }
             _ => rgb_lerp(temp[i], -100.0, 130.0, &BLACK, &WHITE),
         };
@@ -476,7 +512,11 @@ fn long_weather(md: MeteoApiResponse) {
         if high < low + 25.0 {
             high = low + 25.0;
             low -= 5.0;
+        } else {
+            low -= 5.0;
+            high += 5.0;
         }
+        // dbg!(high - low);
         let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX.lock().unwrap());
         let format_temp_bar = add_fg_esc(&temp_bar.to_string(), &rgb_temp);
         print!("{format_temp_bar} ");
@@ -498,9 +538,16 @@ fn long_weather(md: MeteoApiResponse) {
         let format_precip_bar = add_fg_esc(&precip_bar.to_string(), &rgb_precip);
         print!("{format_precip_bar} ");
 
+        // wind
+        let wind_format = {
+            let direction = wind_di_decode(wind_di[i]);
+            format!("\x1b[38;2;222;222;222m{1:>2.0} {0:2}", direction, &wind_spd[i])
+        };
+        print!("{:<3} ", wind_format);
+
         // wmo code msg
         let format_wmo = wmo_decode(wmo[i]);
-        print!("{format_wmo} ");
+        print!("{:<3} ", format_wmo);
 
         println!("\x1b[0m");
     }
@@ -700,6 +747,7 @@ fn main() {
             }
             "--quiet" => SETTINGS.lock().unwrap().quiet = true,
             "--long" => SETTINGS.lock().unwrap().mode = Modes::Long,
+            "--short" => SETTINGS.lock().unwrap().mode = Modes::Short,
             "--force-refresh" => SETTINGS.lock().unwrap().cache_override = true,
             "--runtime-info" => SETTINGS.lock().unwrap().runtime_info = true,
             "--no-color" => SETTINGS.lock().unwrap().no_color = true,
@@ -712,6 +760,7 @@ fn main() {
                     match char {
                         'q' => SETTINGS.lock().unwrap().quiet = true,
                         'l' => SETTINGS.lock().unwrap().mode = Modes::Long,
+                        's' => SETTINGS.lock().unwrap().mode = Modes::Short,
                         'f' => SETTINGS.lock().unwrap().cache_override = true,
                         _ => {
                             println!("Unrecognized option: -{char}");
