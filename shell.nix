@@ -19,10 +19,10 @@ let
 in
   pkgs.mkShell {
     nativeBuildInputs = with unstable; [
-    nixd
-    gcc
+    # nixd
+    # gcc
     rust
-    rust-analyzer
+    # rust-analyzer
     # dep
     openssl
     pkg-config

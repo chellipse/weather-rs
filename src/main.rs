@@ -39,14 +39,6 @@ struct Rgb {
 lazy_static! {
     // used for tracking with option --runtime-info
     static ref START_TIME: Mutex<Instant> = Mutex::new(Instant::now());
-    // struct used for storing settings
-    static ref SETTINGS: Mutex<Settings> = Mutex::new(Settings {
-        mode: Modes::Long,
-        quiet: false,
-        runtime_info: false,
-        no_color: false,
-        cache_override: false,
-    });
     static ref SYSTEM_TIME: u64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => {
             n.as_secs()
@@ -69,6 +61,62 @@ lazy_static! {
         let mut temp_dir = env::temp_dir();
         temp_dir.push("weather_data_cache.json");
         temp_dir
+    };
+    // struct used for storing settings
+    static ref SETTINGS: Settings = {
+        let mut settings = Settings {
+            mode: Modes::Long,
+            quiet: false,
+            runtime_info: false,
+            no_color: false,
+            cache_override: false,
+        };
+        for arg in env::args().skip(1) {
+            match arg.as_str() {
+                "--" => break,
+                "--version" => {
+                    let pkg_name = env!("CARGO_PKG_NAME");
+                    let version = env!("CARGO_PKG_VERSION");
+                    println!("{pkg_name}: {version}");
+                    process::exit(0);
+                }
+                "--help" => {
+                    let pkg_name = env!("CARGO_PKG_NAME");
+                    let version = env!("CARGO_PKG_VERSION");
+                    print!("{pkg_name}: {version}\n{HELP_MSG}");
+                    process::exit(0);
+                }
+                "--quiet" => settings.quiet = true,
+                "--long" => settings.mode = Modes::Long,
+                "--short" => settings.mode = Modes::Short,
+                "--force-refresh" => settings.cache_override = true,
+                "--runtime-info" => settings.runtime_info = true,
+                "--no-color" => settings.no_color = true,
+                arg if arg.starts_with("--") => {
+                    println!("Unrecognized option: {arg}");
+                    process::exit(0);
+                }
+                arg if arg.starts_with('-') => {
+                    for char in arg.chars().skip(1) {
+                        match char {
+                            'q' => settings.quiet = true,
+                            'l' => settings.mode = Modes::Long,
+                            's' => settings.mode = Modes::Short,
+                            'f' => settings.cache_override = true,
+                            _ => {
+                                println!("Unrecognized option: -{char}");
+                                process::exit(0);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    println!("Unrecognized option: {arg}");
+                    process::exit(0);
+                }
+            }
+        }
+        settings
     };
 }
 
@@ -127,7 +175,7 @@ const OG5: Rgb = Rgb { r: 209, g: 68, b: 12 };
 
 // program status updates! if -q or --quiet are passed SETTINGS.quiet = true
 fn status_update<S: std::fmt::Display>(msg: S) {
-    if !SETTINGS.lock().unwrap().quiet {
+    if !SETTINGS.quiet {
         println!("{msg}");
     }
 }
@@ -135,7 +183,7 @@ fn status_update<S: std::fmt::Display>(msg: S) {
 // request data from a website
 #[tokio::main]
 async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
-    if !SETTINGS.lock().unwrap().quiet {
+    if !SETTINGS.quiet {
         println!(
             "Querying {}...",
             url.chars().skip(7).take(20).collect::<String>()
@@ -236,7 +284,7 @@ fn wmo_decode(wmo: u8) -> String {
 
 // add an escape sequence to a &str for the foreground color
 fn add_fg_esc(str: &str, color: &Rgb) -> String {
-    if !SETTINGS.lock().unwrap().no_color {
+    if !SETTINGS.no_color {
         format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
     } else {
         str.to_string()
@@ -245,7 +293,7 @@ fn add_fg_esc(str: &str, color: &Rgb) -> String {
 
 // add an escape sequence to a &str for the background color
 fn add_bg_esc(str: &str, color: &Rgb) -> String {
-    if !SETTINGS.lock().unwrap().no_color {
+    if !SETTINGS.no_color {
         format!("\x1b[48;2;{};{};{}m{}", color.r, color.g, color.b, str)
     } else {
         str.to_string()
@@ -374,7 +422,7 @@ fn to_am_pm(time: i64) -> String {
 
 // print time stamp in ms if "--runtime-info" was submitted
 fn optional_runtime_update() {
-    if SETTINGS.lock().unwrap().runtime_info {
+    if SETTINGS.runtime_info {
         println!(
             "Elapsed time: {} ms",
             START_TIME.lock().unwrap().elapsed().as_millis()
@@ -470,6 +518,18 @@ fn long_weather(md: MeteoApiResponse) {
     let wind_di = &md.minutely_15.wind_direction_10m[start..end];
     let wmo = &md.minutely_15.weather_code[start..end];
 
+    println!("{:>6} {:6}{:bar$}{:>5}{:>5} {:bar$}{:<6}{:13}",
+        "TIME",
+        "TEMP",
+        "TEMPBAR",
+        "HMT",
+        "PRCP",
+        "PRCPBAR",
+        "WIND",
+        "WMO",
+        bar = *BAR_MAX.lock().unwrap()
+    );
+
     for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
         // hour title
         if i == START_DISPLAY {
@@ -560,7 +620,7 @@ fn long_weather(md: MeteoApiResponse) {
 fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
     const CACHE_TIMEOUT: u64 = 1800; // 60 minutes in seconds
 
-    if SETTINGS.lock().unwrap().cache_override {
+    if SETTINGS.cache_override {
         return false;
     }
 
@@ -569,33 +629,33 @@ fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
             Ok(json) => match json["current"]["time"].as_u64() {
                 Some(time) => {
                     if (time as i64 - *SYSTEM_TIME as i64).unsigned_abs() <= CACHE_TIMEOUT {
-                        if !SETTINGS.lock().unwrap().quiet {
+                        if !SETTINGS.quiet {
                             println!("Cache is recent.");
                         }
                         true
                     } else {
-                        if !SETTINGS.lock().unwrap().quiet {
+                        if !SETTINGS.quiet {
                             println!("Cache is outdated.");
                         }
                         false
                     }
                 }
                 None => {
-                    if !SETTINGS.lock().unwrap().quiet {
+                    if !SETTINGS.quiet {
                         println!("Unknown cache age.");
                     }
                     false
                 }
             },
             Err(e) => {
-                if !SETTINGS.lock().unwrap().quiet {
+                if !SETTINGS.quiet {
                     println!("Failed to read cache JSON with err: {e}");
                 }
                 false
             }
         },
         Err(e) => {
-            if !SETTINGS.lock().unwrap().quiet {
+            if !SETTINGS.quiet {
                 println!("Failed to read cache with err: {e}");
             }
             false
@@ -605,21 +665,21 @@ fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
 
 // check if a cache is present
 fn check_cache<P: AsRef<Path>>(path: P) -> bool {
-    if SETTINGS.lock().unwrap().cache_override {
+    if SETTINGS.cache_override {
         return false;
     }
     match fs::read_to_string(&path) {
         Ok(json_str) => match serde_json::from_str::<Value>(&json_str) {
             Ok(_) => true,
             Err(e) => {
-                if !SETTINGS.lock().unwrap().quiet {
+                if !SETTINGS.quiet {
                     println!("Failed to read cache JSON with err: {e}");
                 }
                 false
             }
         },
         Err(e) => {
-            if !SETTINGS.lock().unwrap().quiet {
+            if !SETTINGS.quiet {
                 println!("Failed to read cache with err: {e}");
             }
             false
@@ -729,58 +789,7 @@ fn get_meteo_or_cache(ip_object: IpApiResponse) -> MeteoApiResponse {
 }
 
 fn main() {
-    // set options in SETTINGS struct based on args
-    for arg in env::args().skip(1) {
-        match arg.as_str() {
-            "--" => break,
-            "--version" => {
-                let pkg_name = env!("CARGO_PKG_NAME");
-                let version = env!("CARGO_PKG_VERSION");
-                println!("{pkg_name}: {version}");
-                process::exit(0);
-            }
-            "--help" => {
-                let pkg_name = env!("CARGO_PKG_NAME");
-                let version = env!("CARGO_PKG_VERSION");
-                print!("{pkg_name}: {version}\n{HELP_MSG}");
-                process::exit(0);
-            }
-            "--quiet" => SETTINGS.lock().unwrap().quiet = true,
-            "--long" => SETTINGS.lock().unwrap().mode = Modes::Long,
-            "--short" => SETTINGS.lock().unwrap().mode = Modes::Short,
-            "--force-refresh" => SETTINGS.lock().unwrap().cache_override = true,
-            "--runtime-info" => SETTINGS.lock().unwrap().runtime_info = true,
-            "--no-color" => SETTINGS.lock().unwrap().no_color = true,
-            arg if arg.starts_with("--") => {
-                println!("Unrecognized option: {arg}");
-                process::exit(0);
-            }
-            arg if arg.starts_with('-') => {
-                for char in arg.chars().skip(1) {
-                    match char {
-                        'q' => SETTINGS.lock().unwrap().quiet = true,
-                        'l' => SETTINGS.lock().unwrap().mode = Modes::Long,
-                        's' => SETTINGS.lock().unwrap().mode = Modes::Short,
-                        'f' => SETTINGS.lock().unwrap().cache_override = true,
-                        _ => {
-                            println!("Unrecognized option: -{char}");
-                            process::exit(0);
-                        }
-                    }
-                }
-            }
-            _ => {
-                println!("Unrecognized option: {arg}");
-                process::exit(0);
-            }
-        }
-    }
-    let settings_clone = {
-        let settings = SETTINGS.lock().unwrap();
-        (*settings).clone()
-    };
     optional_runtime_update();
-
     let weather_data: MeteoApiResponse = match check_cache(&*SAVE_LOCATION) {
         // cache exists
         true => {
@@ -828,7 +837,7 @@ fn main() {
     };
     optional_runtime_update();
 
-    match settings_clone.mode {
+    match &SETTINGS.mode {
         Modes::Short => {
             one_line_weather(weather_data);
         }
