@@ -88,7 +88,10 @@ lazy_static! {
                 }
                 "--quiet" => settings.quiet = true,
                 "--long" => settings.mode = Modes::Long,
-                "--short" => settings.mode = Modes::Short,
+                "--short" => {
+                    settings.mode = Modes::Short;
+                    settings.no_color = true;
+                },
                 "--force-refresh" => settings.cache_override = true,
                 "--runtime-info" => settings.runtime_info = true,
                 "--no-color" => settings.no_color = true,
@@ -101,7 +104,10 @@ lazy_static! {
                         match char {
                             'q' => settings.quiet = true,
                             'l' => settings.mode = Modes::Long,
-                            's' => settings.mode = Modes::Short,
+                            's' => {
+                                settings.mode = Modes::Short;
+                                settings.no_color = true;
+                            },
                             'f' => settings.cache_override = true,
                             _ => {
                                 println!("Unrecognized option: -{char}");
@@ -326,16 +332,16 @@ fn one_line_weather(md: MeteoApiResponse) {
         let wind_spd = md.minutely_15.wind_speed_10m[now];
         let wind_di = md.minutely_15.wind_direction_10m[now];
         let direction = wind_di_decode(wind_di);
-        format!("{1:.0}°/{0:2}", direction, wind_spd)
+        format!("{1}-{0}", direction, wind_spd)
     };
     let wmo = md.minutely_15.weather_code;
     println!(
-        "{}° {}% ~{}% {:.8} {}",
+        "{}° {}% {} {:.8} ~{}%",
         temp[now],
         humid[now],
-        precip_max,
-        wmo_decode(wmo[now]),
         wind_format,
+        wmo_decode(wmo[now]),
+        precip_max,
     );
 }
 
