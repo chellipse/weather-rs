@@ -524,7 +524,42 @@ fn long_weather(md: MeteoApiResponse) {
     let wind_di = &md.minutely_15.wind_direction_10m[start..end];
     let wmo = &md.minutely_15.weather_code[start..end];
 
-    println!("{:>6} {:6}{:bar$}{:>5}{:>5} {:bar$}{:<6}{:13}",
+    let mut crnt_temp: f32;
+    let mut crnt_humid: f32;
+    let mut crnt_precip: f32;
+    let mut crnt_wind_spd: f32;
+    let mut crnt_wind_di: i16;
+    let mut crnt_wmo: u8;
+
+    // high/low temp bar
+    let mut low: f32 = *temp
+        .iter()
+        .min_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    let mut high: f32 = *temp
+        .iter()
+        .max_by(|a, b| a.partial_cmp(b).unwrap())
+        .unwrap();
+    {
+        // min margin between left/right sides of bar
+        let margin = 3.5;
+        // min gap between high/low after margin
+        let gap = 30.0;
+
+        low -= margin;
+        high += margin;
+
+        if high - low < gap {
+            let diff = gap - (high - low);
+            low -= diff/2.0;
+            high += diff/2.0;
+        }
+    }
+
+    // display collector
+    let mut display = String::new();
+
+    display.push_str(&format!("{:>6} {:6}{:bar$}{:>5}{:>5} {:bar$}{:<6}{:13}\n",
         "TIME",
         "TEMP",
         "TEMPBAR",
@@ -534,14 +569,20 @@ fn long_weather(md: MeteoApiResponse) {
         "WIND",
         "WMO",
         bar = *BAR_MAX.lock().unwrap()
-    );
+    ));
 
     for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
         // hour title
         if i == START_DISPLAY {
-            print!("{} ", add_bg_esc(">", &PURPLE));
+            display.push_str(&format!("\x1b[0m{} ", add_bg_esc(">", &PURPLE)));
+            crnt_temp     = temp[i];
+            crnt_humid    = humid[i];
+            crnt_precip   = precip[i];
+            crnt_wind_spd = wind_spd[i];
+            crnt_wind_di  = wind_di[i];
+            crnt_wmo      = wmo[i];
         } else {
-            print!("  ");
+            display.push_str(&format!("\x1b[0m  "));
         };
 
         // hour
@@ -550,7 +591,7 @@ fn long_weather(md: MeteoApiResponse) {
         let am_pm = to_am_pm(hour);
         let hour_stdwth = adjust_len_left(am_pm.to_string(), 4);
         let hour_format = add_fg_esc(&hour_stdwth, &WHITE);
-        print!("{hour_format} ");
+        display.push_str(&format!("{hour_format} "));
 
         // temp
         let rgb_temp: Rgb = match temp[i] {
@@ -564,59 +605,44 @@ fn long_weather(md: MeteoApiResponse) {
             _ => rgb_lerp(temp[i], -100.0, 130.0, &BLACK, &WHITE),
         };
         let format_temp = add_fg_esc(&format!("{:.1}°", temp[i]), &rgb_temp);
-        print!("{format_temp} ");
+        display.push_str(&format!("{format_temp} "));
 
         // temp bar
-        let mut low: f32 = *temp
-            .iter()
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        let mut high: f32 = *temp
-            .iter()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-        if high < low + 25.0 {
-            high = low + 25.0;
-            low -= 5.0;
-        } else {
-            low -= 5.0;
-            high += 5.0;
-        }
-        // dbg!(high - low);
         let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX.lock().unwrap());
         let format_temp_bar = add_fg_esc(&temp_bar.to_string(), &rgb_temp);
-        print!("{format_temp_bar} ");
+        display.push_str(&format!("{format_temp_bar} "));
 
         // humidity
         let rgb_humid = rgb_lerp(humid[i], 30.0, 90.0, &WHITE, &DEEP_BLUE);
         let humid_strwth = adjust_len_left(format!("{}%", humid[i]), 4);
         let format_humid = add_fg_esc(&humid_strwth, &rgb_humid);
-        print!("{format_humid} ");
+        display.push_str(&format!("{format_humid} "));
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i], 0.0, 100.0, &ICE_BLUE, &DEEP_BLUE);
         let precip_strwth = adjust_len_left(format!("{}%", precip[i]), 4);
         let format_precip = add_fg_esc(&precip_strwth, &rgb_precip);
-        print!("{format_precip} ");
+        display.push_str(&format!("{format_precip} "));
 
         // precip bar
         let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, *BAR_MAX.lock().unwrap());
         let format_precip_bar = add_fg_esc(&precip_bar.to_string(), &rgb_precip);
-        print!("{format_precip_bar} ");
+        display.push_str(&format!("{format_precip_bar} "));
 
         // wind
         let wind_format = {
             let direction = wind_di_decode(wind_di[i]);
             format!("\x1b[38;2;222;222;222m{1:>2.0} {0:2}", direction, &wind_spd[i])
         };
-        print!("{:<3} ", wind_format);
+        display.push_str(&format!("{:<3} ", wind_format));
 
         // wmo code msg
         let format_wmo = wmo_decode(wmo[i]);
-        print!("{:<3} ", format_wmo);
+        display.push_str(&format!("{:<3} ", format_wmo));
 
-        println!("\x1b[0m");
+        display.push_str("\n");
     }
+    print!("{}", display);
     optional_runtime_update();
 }
 
