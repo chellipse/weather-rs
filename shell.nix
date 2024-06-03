@@ -1,8 +1,8 @@
 let
   rust_overlay = import (builtins.fetchTarball "https://github.com/oxalica/rust-overlay/archive/master.tar.gz");
 
-  pkgs = import <nixos-23.11> { overlays = [ rust_overlay ]; };
-  unstable = import <nixos-unstable> { overlays = [ rust_overlay ]; };
+  pkgs = import <nixos> { overlays = [ rust_overlay ]; };
+  unstable = import <nixpkgs> { overlays = [ rust_overlay ]; };
 
   # rust = unstable.rust-bin.stable.latest.default.override {
       # extensions = [ "rust-src" ];
