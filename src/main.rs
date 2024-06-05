@@ -647,13 +647,13 @@ fn long_weather(md: MeteoApiResponse) {
     // display collector
     let mut display = String::new();
 
-    display.push_str(&format!("{:>6} {:6}{:bar$}{:>5}{:>5} {:bar$}{:<6}{:13}\n",
+    display.push_str(&format!("{:>6} {:6}{:bar$}{:>5}{:>5} {:bar$} {:>5}    {:<8}\n",
         "TIME",
         "TEMP",
-        "TEMPBAR",
+        "TEMP-BAR",
         "HMT",
         "PRCP",
-        "PRCPBAR",
+        "PRCP-BAR",
         "WIND",
         "WMO",
         bar = *BAR_MAX.lock().unwrap()
