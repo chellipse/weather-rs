@@ -15,20 +15,27 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum Modes {
     Short,
     Long,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
+enum EmojiMode {
+    NerdFont,
+    Classic,
+    Technical,
+}
+
+#[derive(Clone, Debug)]
 struct Settings {
     mode: Modes,
     quiet: bool,
     runtime_info: bool,
     no_color: bool,
     cache_override: bool,
-    emoji_nf: bool,
+    emoji: EmojiMode,
 }
 
 struct Rgb {
@@ -71,7 +78,7 @@ lazy_static! {
             runtime_info: false,
             no_color: false,
             cache_override: false,
-            emoji_nf: false
+            emoji: EmojiMode::Technical,
         };
         for arg in env::args().skip(1) {
             match arg.as_str() {
@@ -93,12 +100,21 @@ lazy_static! {
                 "--short" => {
                     settings.mode = Modes::Short;
                     settings.no_color = true;
+                    settings.emoji = EmojiMode::NerdFont;
                 },
                 "--force-refresh" => settings.cache_override = true,
                 "--runtime-info" => settings.runtime_info = true,
                 "--no-color" => {
                     settings.no_color = true;
-                    settings.emoji_nf = true;
+                },
+                "--emoji-nf" => {
+                    settings.emoji = EmojiMode::NerdFont;
+                },
+                "--emoji-classic" => {
+                    settings.emoji = EmojiMode::Classic;
+                },
+                "--emoji-tech" => {
+                    settings.emoji = EmojiMode::Technical;
                 },
                 arg if arg.starts_with("--") => {
                     println!("Unrecognized option: {arg}");
@@ -170,6 +186,7 @@ const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 const L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
 // const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
 // const ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
+const ALT_YELLOW: Rgb = Rgb { r: 235, g: 213, b: 122 };
 const YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
 const ICE_BLUE: Rgb = Rgb { r: 157, g: 235, b: 255 };
 const CLEAR_BLUE: Rgb = Rgb { r: 92, g: 119, b: 242 };
@@ -255,9 +272,10 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
 
 // turn WMO codes into a message
 #[allow(clippy::match_overlapping_arm)]
-fn wmo_decode(wmo: u8, daynight: bool) -> String {
-    let pair =match (SETTINGS.emoji_nf, daynight) {
-        (true, _) => match wmo {
+fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
+    // println!("{:3?} {:5?} {:8?} {:12?}", &wmo, daynight, moon, &SETTINGS.emoji);
+    let (wmo_s, color) =match (&SETTINGS.emoji, daynight) {
+        (EmojiMode::NerdFont, _) => match wmo {
             0 =>       (" ~Clear       ", &CLEAR_BLUE),
             1 =>       (" <Clear       ", &CLEAR_BLUE),
             2 =>       (" ~Cloudy      ", &L_GRAY),
@@ -292,11 +310,11 @@ fn wmo_decode(wmo: u8, daynight: bool) -> String {
             90..=99 => ("N/A 90-99      ", &CLEAR_BLUE),
             _ =>       ("N/A            ", &CLEAR_BLUE),
         },
-        (false, false) => match wmo {
+        (EmojiMode::Classic, false) => match wmo {
             0 =>       ("🌒 Clear         ", &CLEAR_BLUE),
             1 =>       ("🌃 Clear~        ", &CLEAR_BLUE),
-            2 =>       ("☁️ Cloudy~       ", &L_GRAY),
-            3 =>       ("☁️ Cloudy        ", &L_GRAY),
+            2 =>       ("☁️ Cloudy~        ", &L_GRAY),
+            3 =>       ("☁️ Cloudy         ", &L_GRAY),
             44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
             51 =>      ("🌧️ Drizzle~      ", &CLEAR_BLUE),
             53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
@@ -304,16 +322,16 @@ fn wmo_decode(wmo: u8, daynight: bool) -> String {
             61 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
             63 =>      ("🌧️ Rainy         ", &MID_BLUE),
             65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
-            71 =>      ("❄️ Snowy~        ", &CLEAR_BLUE),
-            73 =>      ("❄️ Snowy         ", &CLEAR_BLUE),
-            75 =>      ("❄️ Snowy         ", &CLEAR_BLUE),
+            71 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
+            73 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
+            75 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
             77 =>      ("🌨️ Wintry        ", &CLEAR_BLUE),
             80 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
             81 =>      ("🌧️ Rainy         ", &MID_BLUE),
             82 =>      ("🌧️ Rainy         ", &DEEP_BLUE),
-            85 =>      ("❄️ Snowy~        ", &CLEAR_BLUE),
-            86 =>      ("❄️ Snowy         ", &CLEAR_BLUE),
-            95 =>      ("⛈️ Thunderstorms ", &YELLOW),
+            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
             0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
@@ -326,11 +344,11 @@ fn wmo_decode(wmo: u8, daynight: bool) -> String {
             90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
             _ =>       ("N/A              ", &CLEAR_BLUE),
         },
-        (false, true) => match wmo {
-            0 =>       ("☀️ Clear         ", &CLEAR_BLUE),
-            1 =>       ("🌇 Clear~        ", &CLEAR_BLUE),
+        (EmojiMode::Classic, true) => match wmo {
+            0 =>       ("☀️ Clear          ", &ALT_YELLOW),
+            1 =>       ("🌇 Clear~        ", &ALT_YELLOW),
             2 =>       ("⛅ Cloudy~       ", &L_GRAY),
-            3 =>       ("☁️ Cloudy        ", &L_GRAY),
+            3 =>       ("☁️ Cloudy         ", &L_GRAY),
             44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
             51 =>      ("🌧️ Drizzle~      ", &CLEAR_BLUE),
             53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
@@ -338,16 +356,92 @@ fn wmo_decode(wmo: u8, daynight: bool) -> String {
             61 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
             63 =>      ("🌧️ Rainy         ", &MID_BLUE),
             65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
-            71 =>      ("❄️ Snowy~        ", &CLEAR_BLUE),
-            73 =>      ("❄️ Snowy         ", &CLEAR_BLUE),
-            75 =>      ("❄️ Snowy         ", &CLEAR_BLUE),
+            71 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
+            73 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
+            75 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
             77 =>      ("🌨️ Wintry        ", &CLEAR_BLUE),
             80 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
             81 =>      ("🌧️ Rainy         ", &MID_BLUE),
             82 =>      ("🌧️ Rainy         ", &DEEP_BLUE),
-            85 =>      ("❄️ Snowy~        ", &CLEAR_BLUE),
-            86 =>      ("❄️ Snowy         ", &CLEAR_BLUE),
-            95 =>      ("⛈️ Thunderstorms ", &YELLOW),
+            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
+            0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
+            10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
+            20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
+            30..=39 => ("N/A 30-39        ", &CLEAR_BLUE),
+            40..=49 => ("N/A 40-49        ", &CLEAR_BLUE),
+            50..=59 => ("N/A 50-59        ", &CLEAR_BLUE),
+            60..=69 => ("N/A 60-69        ", &CLEAR_BLUE),
+            70..=79 => ("N/A 70-79        ", &CLEAR_BLUE),
+            80..=89 => ("N/A 80-89        ", &CLEAR_BLUE),
+            90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
+            _ =>       ("N/A              ", &CLEAR_BLUE),
+        },
+        // ⛈️ 🌩️
+        // 🌥️⛅🌤️
+        // ☁️ 🌧️🌨️🌦️
+        // 🌫️❄️ ☀️ 🔅🔆
+        // ☔️🌪️ 🌇🌆🏙️🌃⛆
+        // 🌕🌖🌗🌘🌑🌒🌓🌔
+        (EmojiMode::Technical, true) => match wmo {
+            0 =>       ("☀️ Clear         ", &ALT_YELLOW),
+            1 =>       ("🌤️ Clear        ", &ALT_YELLOW),
+            2 =>       ("🏙️ Cloudy       ", &L_GRAY),
+            3 =>       ("☁️ Cloudy         ", &L_GRAY),
+            // 3 =>       ("⛅Cloudy         ", &L_GRAY),
+            // 3 =>       ("🌥️Cloudy         ", &L_GRAY),
+            44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
+            51 =>      ("🌦️ Drizzle~      ", &CLEAR_BLUE),
+            53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
+            55 =>      ("🌧️ Drizzle+       ", &DEEP_BLUE),
+            61 =>      ("🌦️ Rain~        ", &CLEAR_BLUE),
+            63 =>      ("🌧️ Rain         ", &MID_BLUE),
+            65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
+            71 =>      ("❄️ Snow~         ", &CLEAR_BLUE),
+            73 =>      ("❄️ Snow          ", &CLEAR_BLUE),
+            75 =>      ("❄️ Snow+          ", &CLEAR_BLUE),
+            77 =>      ("🌫️ Wintry        ", &CLEAR_BLUE),
+            80 =>      ("🌦️ Rainy~        ", &CLEAR_BLUE),
+            81 =>      ("🌧️ Rainy         ", &MID_BLUE),
+            82 =>      ("🌧️ Rainy+         ", &DEEP_BLUE),
+            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
+            0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
+            10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
+            20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
+            30..=39 => ("N/A 30-39        ", &CLEAR_BLUE),
+            40..=49 => ("N/A 40-49        ", &CLEAR_BLUE),
+            50..=59 => ("N/A 50-59        ", &CLEAR_BLUE),
+            60..=69 => ("N/A 60-69        ", &CLEAR_BLUE),
+            70..=79 => ("N/A 70-79        ", &CLEAR_BLUE),
+            80..=89 => ("N/A 80-89        ", &CLEAR_BLUE),
+            90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
+            _ =>       ("N/A              ", &CLEAR_BLUE),
+        },
+        (EmojiMode::Technical, false) => match wmo {
+            0 =>       ("%m Clear         ", &CLEAR_BLUE),
+            1 =>       ("%m Clear        ", &CLEAR_BLUE),
+            2 =>       ("🌃 Cloudy       ", &L_GRAY),
+            3 =>       ("☁️ Cloudy         ", &L_GRAY),
+            44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
+            51 =>      ("🌧️ Drizzle~      ", &CLEAR_BLUE),
+            53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
+            55 =>      ("🌧️ Drizzle+       ", &DEEP_BLUE),
+            61 =>      ("🌧️ Rain~        ", &CLEAR_BLUE),
+            63 =>      ("🌧️ Rain         ", &MID_BLUE),
+            65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
+            71 =>      ("❄️ Snow~         ", &CLEAR_BLUE),
+            73 =>      ("❄️ Snow          ", &CLEAR_BLUE),
+            75 =>      ("❄️ Snow+          ", &CLEAR_BLUE),
+            77 =>      ("🌫️ Wintry        ", &CLEAR_BLUE),
+            80 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
+            81 =>      ("🌧️ Rainy         ", &MID_BLUE),
+            82 =>      ("🌧️ Rainy+         ", &DEEP_BLUE),
+            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
             0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
@@ -361,7 +455,19 @@ fn wmo_decode(wmo: u8, daynight: bool) -> String {
             _ =>       ("N/A              ", &CLEAR_BLUE),
         },
     };
-    add_fg_esc(&format!("{:.10}", pair.0), pair.1)
+    let wmo_string_with_moon = match moon {
+        // 🌕🌖🌗🌘🌑🌒🌓🌔
+        MoonPhase::Full        => wmo_s.replace("%m", "🌕"),
+        MoonPhase::WanGib      => wmo_s.replace("%m", "🌖"),
+        MoonPhase::LastQ       => wmo_s.replace("%m", "🌗"),
+        MoonPhase::WanCres     => wmo_s.replace("%m", "🌘"),
+        MoonPhase::New         => wmo_s.replace("%m", "🌑"),
+        MoonPhase::WaxCres     => wmo_s.replace("%m", "🌒"),
+        MoonPhase::FirstQ      => wmo_s.replace("%m", "🌓"),
+        MoonPhase::WaxGib      => wmo_s.replace("%m", "🌔"),
+        MoonPhase::Invalid(n)  => wmo_s.replace("%m", &format!("{}", n)),
+    };
+    add_fg_esc(&format!("{:.10}", wmo_string_with_moon), color)
 }
 
 // add an escape sequence to a &str for the foreground color
@@ -398,8 +504,8 @@ fn rgb_lerp(x: f32, y: f32, z: f32, color1: &Rgb, color2: &Rgb) -> Rgb {
 
 // prints a single line weather update, good for status bars
 fn one_line_weather(md: MeteoApiResponse) {
-    let time_data = &md.minutely_15.time;
-    let now = get_time_index(time_data);
+    let time = &md.minutely_15.time;
+    let now = get_time_index(time);
 
     let temp = md.minutely_15.temperature_2m;
     let humid = md.minutely_15.relative_humidity_2m;
@@ -411,12 +517,20 @@ fn one_line_weather(md: MeteoApiResponse) {
         format!("{1}-{0}", direction, wind_spd)
     };
     let wmo = md.minutely_15.weather_code;
+
+    let sunset  = md.daily.sunset[PAST_DAYS as usize];
+    let sunrise = md.daily.sunrise[PAST_DAYS as usize];
+
     println!(
         "{}° {}% {} {:.8} ~{}%",
         temp[now],
         humid[now],
         wind_format,
-        wmo_decode(wmo[now], true),
+        wmo_decode(
+            wmo[now],
+            time[now] < sunset && time[now] > sunrise,
+            get_moon_phase(time[now])
+            ),
         precip_max,
     );
 }
@@ -582,6 +696,49 @@ fn wind_di_decode(di: i16) -> &'static str {
     }
 }
 
+// 🌕🌖🌗🌘🌑🌒🌓🌔
+#[derive(Debug)]
+enum MoonPhase {
+    Full,
+    WanGib,
+    LastQ,
+    WanCres,
+    New,
+    WaxCres,
+    FirstQ,
+    WaxGib,
+    Invalid(u32),
+}
+
+fn get_moon_phase(time: u32) -> MoonPhase {
+    let period = 2551442;
+    let inc = 2551442 / 8;
+    let remainder = period%8;
+    assert!(period == inc*8+remainder);
+
+    // this offset almost certainly drifts overtime
+    // it will likely need manual updating
+    // LAST UPDATED: UTC -04:00 / 2024-06-06(Thu) 09:28
+    let offset = 86400-3600;
+
+    let lunar = (time+offset) % period;
+    match lunar {
+        x if (0    ..=inc            ).contains(&x) => MoonPhase::LastQ,
+        x if (inc  ..=inc*2          ).contains(&x) => MoonPhase::WanCres,
+        x if (inc*2..=inc*3          ).contains(&x) => MoonPhase::New,
+        x if (inc*3..=inc*4          ).contains(&x) => MoonPhase::WaxCres,
+        x if (inc*4..=inc*5          ).contains(&x) => MoonPhase::FirstQ,
+        x if (inc*5..=inc*6          ).contains(&x) => MoonPhase::WaxGib,
+        x if (inc*6..=inc*7          ).contains(&x) => MoonPhase::Full,
+        x if (inc*7..=inc*8+remainder).contains(&x) => MoonPhase::WanGib,
+        x                                           => MoonPhase::Invalid(x),
+    }
+}
+
+
+
+
+
 // displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
     // defines global variables about what shape data should be displayed in
@@ -589,14 +746,6 @@ fn long_weather(md: MeteoApiResponse) {
 
     let sunset  = md.daily.sunset[PAST_DAYS as usize];
     let sunrise = md.daily.sunrise[PAST_DAYS as usize];
-
-    // println!("{:?}", sunset);
-    // println!("{:?}", sunrise);
-    // let r = [0 ,1 ,2 ,3 ,44 ,45 ,48 ,51 ,53 ,55 ,61 ,63 ,65 ,71 ,73 ,75 ,77 ,80 ,81 ,82 ,85 ,86 ,95];
-    // for n in r {
-        // println!("{}", wmo_decode(n, false));
-        // println!("{}", wmo_decode(n, true));
-    // }
 
     let time_data = &md.minutely_15.time;
     let current_time_index = get_time_index(time_data);
@@ -611,13 +760,6 @@ fn long_weather(md: MeteoApiResponse) {
     let wind_spd = &md.minutely_15.wind_speed_10m[start..end];
     let wind_di = &md.minutely_15.wind_direction_10m[start..end];
     let wmo = &md.minutely_15.weather_code[start..end];
-
-    // let mut crnt_temp: f32;
-    // let mut crnt_humid: f32;
-    // let mut crnt_precip: f32;
-    // let mut crnt_wind_spd: f32;
-    // let mut crnt_wind_di: i16;
-    // let mut crnt_wmo: u8;
 
     // high/low temp bar
     let mut low: f32 = *temp
@@ -663,18 +805,9 @@ fn long_weather(md: MeteoApiResponse) {
         // hour title
         if i == START_DISPLAY {
             display.push_str(&format!("\x1b[0m{} ", add_bg_esc(">", &PURPLE)));
-            // What was this gonna be for????
-            // crnt_temp     = temp[i];
-            // crnt_humid    = humid[i];
-            // crnt_precip   = precip[i];
-            // crnt_wind_spd = wind_spd[i];
-            // crnt_wind_di  = wind_di[i];
-            // crnt_wmo      = wmo[i];
         } else {
             display.push_str(&format!("\x1b[0m  "));
         };
-
-        // println!("{} ", time[i] < sunset && time[i] > sunrise);
 
         // hour
         let time_offset = time[i] as i64 + md.utc_offset_seconds;
@@ -728,8 +861,13 @@ fn long_weather(md: MeteoApiResponse) {
         display.push_str(&format!("{:<3} ", wind_format));
 
         // wmo code msg
-        let format_wmo = wmo_decode(wmo[i], time[i] < sunset && time[i] > sunrise);
+        let format_wmo = wmo_decode(
+            wmo[i],
+            time[i] < sunset && time[i] > sunrise,
+            get_moon_phase(time[i]),
+        );
         display.push_str(&format!("{:<3}\n", format_wmo));
+
     }
     print!("{}", display);
     optional_runtime_update();
