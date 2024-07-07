@@ -29,6 +29,12 @@ enum EmojiMode {
 }
 
 #[derive(Clone, Debug)]
+enum TempScale {
+    Fahrenheit,
+    Celsius,
+}
+
+#[derive(Clone, Debug)]
 struct Settings {
     mode: Modes,
     quiet: bool,
@@ -36,6 +42,7 @@ struct Settings {
     no_color: bool,
     cache_override: bool,
     emoji: EmojiMode,
+    temp_scale: TempScale,
 }
 
 struct Rgb {
@@ -79,6 +86,7 @@ lazy_static! {
             no_color: false,
             cache_override: false,
             emoji: EmojiMode::Technical,
+            temp_scale: TempScale::Fahrenheit,
         };
         for arg in env::args().skip(1) {
             match arg.as_str() {
@@ -102,7 +110,7 @@ lazy_static! {
                     settings.no_color = true;
                     settings.emoji = EmojiMode::NerdFont;
                 },
-                "--force-refresh" => settings.cache_override = true,
+                "--refresh" => settings.cache_override = true,
                 "--runtime-info" => settings.runtime_info = true,
                 "--no-color" => {
                     settings.no_color = true;
@@ -129,7 +137,9 @@ lazy_static! {
                                 settings.mode = Modes::Short;
                                 settings.no_color = true;
                             },
-                            'f' => settings.cache_override = true,
+                            'r' => settings.cache_override = true,
+                            'f' => settings.temp_scale = TempScale::Fahrenheit,
+                            'c' => settings.temp_scale = TempScale::Celsius,
                             _ => {
                                 println!("Unrecognized option: -{char}");
                                 process::exit(0);
@@ -247,7 +257,11 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             DEFAULT_TIMEZONE.to_string()
         }
     };
-    // let timezone_gmt = "GMT";
+
+    let scale = match SETTINGS.temp_scale {
+        TempScale::Fahrenheit => "fahrenheit",
+        TempScale::Celsius    => "celsius",
+    };
 
     let url = format!(
         concat!(
@@ -258,14 +272,14 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             "hourly=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "minutely_15=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max&",
-            "temperature_unit=fahrenheit&",
+            "temperature_unit={}&",  // <--
             "wind_speed_unit=mph&",
             "timeformat=unixtime&",
             "timezone={}&", // <--
             "past_days={}&", // <--
             "forecast_days={}" // <--
         ),
-        lat, lon, timezone, PAST_DAYS, FORECAST_DAYS
+        lat, lon, scale, timezone, PAST_DAYS, FORECAST_DAYS
     );
     url
 }
@@ -818,15 +832,31 @@ fn long_weather(md: MeteoApiResponse) {
         display.push_str(&format!("{hour_format} "));
 
         // temp
-        let rgb_temp: Rgb = match temp[i] {
-            x if (105.0..130.0).contains(&x) => rgb_lerp(temp[i], 105.0, 130.0, &OG4, &OG5),
-            x if (80.0..105.0).contains(&x) => rgb_lerp(temp[i], 80.0, 105.0, &OG3, &OG4),
-            x if (50.0..80.0).contains(&x) => rgb_lerp(temp[i], 50.0, 80.0, &OG2, &OG3),
-            x if (32.0..50.0).contains(&x) => rgb_lerp(temp[i], 32.0, 50.0, &OG1, &OG2),
-            x if (10.0..32.0).contains(&x) => {
-                rgb_lerp(temp[i], 10.0, 32.0, &OG0, &OG1)
+        let rgb_temp: Rgb = match SETTINGS.temp_scale {
+            TempScale::Fahrenheit => {
+                match temp[i] {
+                    x if (105.0..130.0).contains(&x) => rgb_lerp(temp[i], 105.0, 130.0, &OG4, &OG5),
+                    x if (80.0..105.0).contains(&x) => rgb_lerp(temp[i], 80.0, 105.0, &OG3, &OG4),
+                    x if (50.0..80.0).contains(&x) => rgb_lerp(temp[i], 50.0, 80.0, &OG2, &OG3),
+                    x if (32.0..50.0).contains(&x) => rgb_lerp(temp[i], 32.0, 50.0, &OG1, &OG2),
+                    x if (10.0..32.0).contains(&x) => {
+                        rgb_lerp(temp[i], 10.0, 32.0, &OG0, &OG1)
+                    }
+                    _ => rgb_lerp(temp[i], -100.0, 130.0, &BLACK, &WHITE),
+                }
+            },
+            TempScale::Celsius => {
+                match temp[i] {
+                    x if (40.56..54.44).contains(&x) => rgb_lerp(temp[i], 40.56, 54.44, &OG4, &OG5),
+                    x if (26.67..40.56).contains(&x) => rgb_lerp(temp[i], 26.67, 40.56, &OG3, &OG4),
+                    x if (10.0..26.67).contains(&x) => rgb_lerp(temp[i], 10.0, 26.67, &OG2, &OG3),
+                    x if (0.0..10.0).contains(&x) => rgb_lerp(temp[i], 0.0, 10.0, &OG1, &OG2),
+                    x if (-12.22..0.0).contains(&x) => {
+                        rgb_lerp(temp[i], -12.22, 0.0, &OG0, &OG1)
+                    }
+                    _ => rgb_lerp(temp[i], -73.33, 54.44, &BLACK, &WHITE),
+                }
             }
-            _ => rgb_lerp(temp[i], -100.0, 130.0, &BLACK, &WHITE),
         };
         let format_temp = add_fg_esc(&format!("{:.1}°", temp[i]), &rgb_temp);
         display.push_str(&format!("{format_temp} "));
@@ -876,7 +906,7 @@ fn long_weather(md: MeteoApiResponse) {
 // check if the cache is recent
 // returns True if the absolute difference between SYSTEM_TIME and cache.current.time
 // is <= CACHE_TIMEOUT
-fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
+fn is_cache_valid<P: AsRef<Path>>(path: P) -> bool {
     const CACHE_TIMEOUT: u64 = 1800; // 60 minutes in seconds
 
     if SETTINGS.cache_override {
@@ -884,27 +914,15 @@ fn is_cache_recent<P: AsRef<Path>>(path: P) -> bool {
     }
 
     match fs::read_to_string(&path) {
-        Ok(json_str) => match serde_json::from_str::<Value>(&json_str) {
-            Ok(json) => match json["current"]["time"].as_u64() {
-                Some(time) => {
-                    if (time as i64 - *SYSTEM_TIME as i64).unsigned_abs() <= CACHE_TIMEOUT {
-                        if !SETTINGS.quiet {
-                            println!("Cache is recent.");
-                        }
-                        true
-                    } else {
-                        if !SETTINGS.quiet {
-                            println!("Cache is outdated.");
-                        }
-                        false
-                    }
+        Ok(string) => match serde_json::from_str::<MeteoApiResponse>(&string) {
+            Ok(json) => {
+                if (*SYSTEM_TIME as i64 - json.current.time as i64).unsigned_abs() >= CACHE_TIMEOUT { return false }
+                match (&SETTINGS.temp_scale, json.hourly_units.temperature_2m.as_str()) {
+                    (TempScale::Fahrenheit, "°F") => {},
+                    (TempScale::Celsius,    "°C") => {},
+                    (_, _) => return false,
                 }
-                None => {
-                    if !SETTINGS.quiet {
-                        println!("Unknown cache age.");
-                    }
-                    false
-                }
+                true
             },
             Err(e) => {
                 if !SETTINGS.quiet {
@@ -953,6 +971,7 @@ fn get_meteo_or_ext(ip_object: IpApiResponse) -> MeteoApiResponse {
         Ok(meteo_data) => {
             status_update("Data received.");
             let json = serde_json::to_string(&meteo_data).unwrap();
+            dbg!(&*SAVE_LOCATION);
             match fs::write(&*SAVE_LOCATION, json) {
                 Ok(_) => {
                     status_update("Cache saved.");
@@ -1052,7 +1071,7 @@ fn main() {
     let weather_data: MeteoApiResponse = match check_cache(&*SAVE_LOCATION) {
         // cache exists
         true => {
-            match is_cache_recent(&*SAVE_LOCATION) {
+            match is_cache_valid(&*SAVE_LOCATION) {
                 // cache is recent
                 true => use_cache(),
                 // cache is old

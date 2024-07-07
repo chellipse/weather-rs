@@ -20,11 +20,23 @@ pub struct MeteoApiResponse {
     pub elevation: f32,
     pub current_units: HashMap<String, String>,
     pub current: CurrentData,
-    pub hourly_units: HashMap<String, String>,
+    pub hourly_units: HourlyUnits,
     pub hourly: HourlyData,
     pub minutely_15: FifteenMinutely,
     pub daily_units: HashMap<String, String>,
     pub daily: DailyData,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HourlyUnits {
+    pub time: String,
+    pub relative_humidity_2m: String,
+    pub precipitation_probability: String,
+    pub dew_point_2m: String,
+    pub wind_speed_10m: String,
+    pub wind_direction_10m: String,
+    pub temperature_2m: String,
+    pub weather_code: String
 }
 
 #[derive(Serialize, Deserialize, Debug)]
