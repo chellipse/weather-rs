@@ -108,7 +108,6 @@ lazy_static! {
                 "--short" => {
                     settings.mode = Modes::Short;
                     settings.no_color = true;
-                    settings.emoji = EmojiMode::NerdFont;
                 },
                 "--refresh" => settings.cache_override = true,
                 "--runtime-info" => settings.runtime_info = true,
@@ -183,11 +182,17 @@ const HELP_MSG: &str = "USAGE: weather [OPTIONS]
 OPTIONS
       --help             Display this help message, then exit
       --version          Display package name and version, then exit
+  -c                     Use Fahrenheit
+  -f                     Use Celcius
   -l, --long             Display hourly forecast
+  -s, --short            Display hourly forecast
   -q, --quiet            Disable non-Err messages
       --no-color         Disable coler escapes
-  -f, --force-refresh    Disregard cache
+  -r, --force-refresh    Disregard cache
       --runtime-info     Display updates on program speed in ms
+      --emoji-classic    Use Classic Emojis
+      --emoji-tech       Use Technical Emojis
+      --emoji-nf         Use NerdFonts instead of Emojis
 ";
 
 // colors to use with rgb_lerp
