@@ -16,9 +16,10 @@ mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
 
 #[derive(Clone, Debug)]
-enum Modes {
-    Short,
-    Long,
+enum Mode {
+    Current,
+    Day,
+    Week,
 }
 
 #[derive(Clone, Debug)]
@@ -36,7 +37,7 @@ enum TempScale {
 
 #[derive(Clone, Debug)]
 struct Settings {
-    mode: Modes,
+    mode: Mode,
     quiet: bool,
     runtime_info: bool,
     no_color: bool,
@@ -80,7 +81,7 @@ lazy_static! {
     // struct used for storing settings
     static ref SETTINGS: Settings = {
         let mut settings = Settings {
-            mode: Modes::Long,
+            mode: Mode::Day,
             quiet: false,
             runtime_info: false,
             no_color: false,
@@ -104,9 +105,10 @@ lazy_static! {
                     process::exit(0);
                 }
                 "--quiet" => settings.quiet = true,
-                "--long" => settings.mode = Modes::Long,
+                "--week" => settings.mode = Mode::Day,
+                "--day" => settings.mode = Mode::Day,
                 "--short" => {
-                    settings.mode = Modes::Short;
+                    settings.mode = Mode::Current;
                     settings.no_color = true;
                 },
                 "--refresh" => settings.cache_override = true,
@@ -131,9 +133,10 @@ lazy_static! {
                     for char in arg.chars().skip(1) {
                         match char {
                             'q' => settings.quiet = true,
-                            'l' => settings.mode = Modes::Long,
+                            'w' => settings.mode = Mode::Week,
+                            'd' => settings.mode = Mode::Day,
                             's' => {
-                                settings.mode = Modes::Short;
+                                settings.mode = Mode::Current;
                                 settings.no_color = true;
                             },
                             'r' => settings.cache_override = true,
@@ -154,17 +157,24 @@ lazy_static! {
         }
         settings
     };
+
+    // days worth of past data to request, must be >= 1
+    static ref PAST_DAYS: i32 = match SETTINGS.mode {
+        Mode::Week => 2,
+        _ => 2,
+    };
+    // days of future data to request, must be >= 2
+    static ref FORECAST_DAYS: i32 = match SETTINGS.mode {
+        Mode::Week => 12,
+        _ => 12,
+    };
+
 }
 
 // url for ip-api
 const IP_URL: &str = "http://ip-api.com/json/";
 
-// days worth of past data to request, must be >= 1
-const PAST_DAYS: i32 = 1;
-// days of future data to request, must be >= 2
-const FORECAST_DAYS: i32 = 2;
-
-// prev and future hours to display with --long or -l, * 4 because 15 minutely
+// prev and future hours to display with Mode::Day * 4 because 15 minutely
 const START_DISPLAY: usize = 6 * 4;
 const END_DISPLAY: usize = 24 * 4;
 
@@ -284,7 +294,7 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             "past_days={}&", // <--
             "forecast_days={}" // <--
         ),
-        lat, lon, scale, timezone, PAST_DAYS, FORECAST_DAYS
+        lat, lon, scale, timezone, *PAST_DAYS, *FORECAST_DAYS
     );
     url
 }
@@ -528,7 +538,7 @@ fn one_line_weather(md: MeteoApiResponse) {
 
     let temp = md.minutely_15.temperature_2m;
     let humid = md.minutely_15.relative_humidity_2m;
-    let precip_max = md.daily.precipitation_probability_max[PAST_DAYS as usize];
+    let precip_max = md.daily.precipitation_probability_max[*PAST_DAYS as usize];
     let wind_format = {
         let wind_spd = md.minutely_15.wind_speed_10m[now];
         let wind_di = md.minutely_15.wind_direction_10m[now];
@@ -537,8 +547,8 @@ fn one_line_weather(md: MeteoApiResponse) {
     };
     let wmo = md.minutely_15.weather_code;
 
-    let sunset  = md.daily.sunset[PAST_DAYS as usize];
-    let sunrise = md.daily.sunrise[PAST_DAYS as usize];
+    let sunset  = md.daily.sunset[*PAST_DAYS as usize];
+    let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
 
     println!(
         "{}° {}% {} {:.8} ~{}%",
@@ -806,12 +816,9 @@ fn get_temp_rgb(temp: f32) -> Rgb {
 }
 
 // displays hourly weather info for the CLI
-fn long_weather(md: MeteoApiResponse) {
-    // defines global variables about what shape data should be displayed in
-    define_dimensions();
-
-    let sunset  = md.daily.sunset[PAST_DAYS as usize];
-    let sunrise = md.daily.sunrise[PAST_DAYS as usize];
+fn hourly_weather(md: MeteoApiResponse) {
+    let sunset  = md.daily.sunset[*PAST_DAYS as usize];
+    let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
 
     let time_data = &md.minutely_15.time;
     let current_time_index = get_time_index(time_data);
@@ -891,7 +898,7 @@ fn long_weather(md: MeteoApiResponse) {
 
         // temp bar
         let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX.lock().unwrap());
-        let format_temp_bar = add_fg_esc(&temp_bar.to_string(), &rgb_temp);
+        let format_temp_bar = add_fg_esc(&temp_bar, &rgb_temp);
         display.push_str(&format!("{format_temp_bar} "));
 
         // humidity
@@ -1009,7 +1016,6 @@ fn get_meteo_or_ext(ip_object: IpApiResponse) -> MeteoApiResponse {
         Ok(meteo_data) => {
             status_update("Data received.");
             let json = serde_json::to_string(&meteo_data).unwrap();
-            dbg!(&*SAVE_LOCATION);
             match fs::write(&*SAVE_LOCATION, json) {
                 Ok(_) => {
                     status_update("Cache saved.");
@@ -1104,6 +1110,62 @@ fn get_meteo_or_cache(ip_object: IpApiResponse) -> MeteoApiResponse {
     }
 }
 
+macro_rules! di_add {
+    ($display:expr, $format:expr, $rgb:expr) => {
+        $display.push_str(&add_fg_esc(&$format, &$rgb));
+    };
+}
+
+fn weekly_weather(md: MeteoApiResponse) {
+    const CHUNK_LEN: usize = 24 * 4;
+    // let time_data = &md.minutely_15.time;
+    // let current_time_index = get_time_index(time_data);
+
+    let mut di: Vec<String> = vec![String::new(); (*PAST_DAYS + *FORECAST_DAYS) as usize];
+
+    let gl_min = md.minutely_15.temperature_2m.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+    let gl_max = md.minutely_15.temperature_2m.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+    for (x, y) in md.minutely_15.temperature_2m.chunks(CHUNK_LEN).enumerate() {
+        assert!(y.len() == CHUNK_LEN);
+        di_add!(di[x], format!("{:3} ", x as i32 - 2), &WHITE);
+
+        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let rgb_min = get_temp_rgb(min);
+        di_add!(di[x], format!("{:.1} ", min), rgb_min);
+
+        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let rgb_max = get_temp_rgb(max);
+        di_add!(di[x], format!("{:.1} ", max), rgb_max);
+
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let rgb_mean = get_temp_rgb(mean);
+        di_add!(di[x], format!("{:.1} ", mean), rgb_mean);
+
+        let mean_bar = mk_bar(&mean, &gl_min, &gl_max, &1.0, *BAR_MAX.lock().unwrap());
+        di_add!(di[x], format!("{:} ", mean_bar), rgb_mean);
+    }
+
+    for (x, y) in md.minutely_15.relative_humidity_2m.chunks(CHUNK_LEN).enumerate() {
+        assert!(y.len() == CHUNK_LEN);
+
+        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let rgb_min = rgb_lerp(min, 30.0, 90.0, &WHITE, &DEEP_BLUE);
+        di_add!(di[x], format!("{:.1} ", min), rgb_min);
+
+        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let rgb_max = rgb_lerp(max, 30.0, 90.0, &WHITE, &DEEP_BLUE);
+        di_add!(di[x], format!("{:.1} ", max), rgb_max);
+
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let rgb_mean = rgb_lerp(mean, 30.0, 90.0, &WHITE, &DEEP_BLUE);
+        di_add!(di[x], format!("{:.1} ", mean), rgb_mean);
+    }
+
+    for line in di.into_iter() {
+        println!("{line}");
+    }
+}
+
 fn main() {
     optional_runtime_update();
     let weather_data: MeteoApiResponse = match check_cache(&*SAVE_LOCATION) {
@@ -1153,12 +1215,18 @@ fn main() {
     };
     optional_runtime_update();
 
+    // defines global variables about what shape data should be displayed in
+    define_dimensions();
+
     match &SETTINGS.mode {
-        Modes::Short => {
+        Mode::Current => {
             one_line_weather(weather_data);
         }
-        Modes::Long => {
-            long_weather(weather_data);
+        Mode::Day => {
+            hourly_weather(weather_data);
+        }
+        Mode::Week => {
+            weekly_weather(weather_data);
         }
     }
 }
