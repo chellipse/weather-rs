@@ -199,7 +199,7 @@ OPTIONS
 const WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
 const BLACK: Rgb = Rgb { r: 0, g: 0, b: 0 };
 const L_GRAY: Rgb = Rgb { r: 180, g: 180, b: 180 };
-// const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
+const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
 // const ORANGE: Rgb = Rgb { r: 255, g: 128, b: 0 };
 const ALT_YELLOW: Rgb = Rgb { r: 235, g: 213, b: 122 };
 const YELLOW: Rgb = Rgb { r: 255, g: 233, b: 102 };
@@ -754,9 +754,56 @@ fn get_moon_phase(time: u32) -> MoonPhase {
     }
 }
 
+// fn compute_wet_bulb(temp: f32, relative_humidity_percent: f32) -> f32 { }
+fn compute_wet_bulb(temp: f32, rh: f32) -> f32 {
+    match SETTINGS.temp_scale {
+        TempScale::Celsius => {
+            temp * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan()
+            + (temp + rh).atan()
+            - (rh - 1.676331f32).atan()
+            + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
+            - 4.686035f32
+        },
+        TempScale::Fahrenheit => {
+            let temp_c = (temp - 32.0) * 5.0 / 9.0;
+            let wb_c = temp_c * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan()
+            + (temp_c + rh).atan()
+            - (rh - 1.676331f32).atan()
+            + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
+            - 4.686035f32;
+            (wb_c * 9.0 / 5.0) + 32.0
+        },
+    }
+}
 
-
-
+fn get_temp_rgb(temp: f32) -> Rgb {
+    match SETTINGS.temp_scale {
+        TempScale::Fahrenheit => {
+            match temp {
+                x if (105.0..130.0).contains(&x) => rgb_lerp(temp, 105.0, 130.0, &OG4, &OG5),
+                x if (80.0..105.0).contains(&x) => rgb_lerp(temp, 80.0, 105.0, &OG3, &OG4),
+                x if (50.0..80.0).contains(&x) => rgb_lerp(temp, 50.0, 80.0, &OG2, &OG3),
+                x if (32.0..50.0).contains(&x) => rgb_lerp(temp, 32.0, 50.0, &OG1, &OG2),
+                x if (10.0..32.0).contains(&x) => {
+                    rgb_lerp(temp, 10.0, 32.0, &OG0, &OG1)
+                }
+                _ => rgb_lerp(temp, -100.0, 130.0, &BLACK, &WHITE),
+            }
+        },
+        TempScale::Celsius => {
+            match temp {
+                x if (40.56..54.44).contains(&x) => rgb_lerp(temp, 40.56, 54.44, &OG4, &OG5),
+                x if (26.67..40.56).contains(&x) => rgb_lerp(temp, 26.67, 40.56, &OG3, &OG4),
+                x if (10.0..26.67).contains(&x) => rgb_lerp(temp, 10.0, 26.67, &OG2, &OG3),
+                x if (0.0..10.0).contains(&x) => rgb_lerp(temp, 0.0, 10.0, &OG1, &OG2),
+                x if (-12.22..0.0).contains(&x) => {
+                    rgb_lerp(temp, -12.22, 0.0, &OG0, &OG1)
+                }
+                _ => rgb_lerp(temp, -73.33, 54.44, &BLACK, &WHITE),
+            }
+        }
+    }
+}
 
 // displays hourly weather info for the CLI
 fn long_weather(md: MeteoApiResponse) {
@@ -808,11 +855,12 @@ fn long_weather(md: MeteoApiResponse) {
     // display collector
     let mut display = String::new();
 
-    display.push_str(&format!("{:>6} {:6}{:bar$}{:>5}{:>5} {:bar$} {:>5}    {:<8}\n",
+    display.push_str(&format!("{:>6} {:6}{:bar$}{:>5}{:>3}{:>8} {:bar$} {:>5}    {:<8}\n",
         "TIME",
         "TEMP",
         "TEMP-BAR",
         "HMT",
+        "WB",
         "PRCP",
         "PRCP-BAR",
         "WIND",
@@ -837,32 +885,7 @@ fn long_weather(md: MeteoApiResponse) {
         display.push_str(&format!("{hour_format} "));
 
         // temp
-        let rgb_temp: Rgb = match SETTINGS.temp_scale {
-            TempScale::Fahrenheit => {
-                match temp[i] {
-                    x if (105.0..130.0).contains(&x) => rgb_lerp(temp[i], 105.0, 130.0, &OG4, &OG5),
-                    x if (80.0..105.0).contains(&x) => rgb_lerp(temp[i], 80.0, 105.0, &OG3, &OG4),
-                    x if (50.0..80.0).contains(&x) => rgb_lerp(temp[i], 50.0, 80.0, &OG2, &OG3),
-                    x if (32.0..50.0).contains(&x) => rgb_lerp(temp[i], 32.0, 50.0, &OG1, &OG2),
-                    x if (10.0..32.0).contains(&x) => {
-                        rgb_lerp(temp[i], 10.0, 32.0, &OG0, &OG1)
-                    }
-                    _ => rgb_lerp(temp[i], -100.0, 130.0, &BLACK, &WHITE),
-                }
-            },
-            TempScale::Celsius => {
-                match temp[i] {
-                    x if (40.56..54.44).contains(&x) => rgb_lerp(temp[i], 40.56, 54.44, &OG4, &OG5),
-                    x if (26.67..40.56).contains(&x) => rgb_lerp(temp[i], 26.67, 40.56, &OG3, &OG4),
-                    x if (10.0..26.67).contains(&x) => rgb_lerp(temp[i], 10.0, 26.67, &OG2, &OG3),
-                    x if (0.0..10.0).contains(&x) => rgb_lerp(temp[i], 0.0, 10.0, &OG1, &OG2),
-                    x if (-12.22..0.0).contains(&x) => {
-                        rgb_lerp(temp[i], -12.22, 0.0, &OG0, &OG1)
-                    }
-                    _ => rgb_lerp(temp[i], -73.33, 54.44, &BLACK, &WHITE),
-                }
-            }
-        };
+        let rgb_temp = get_temp_rgb(temp[i]);
         let format_temp = add_fg_esc(&format!("{:.1}°", temp[i]), &rgb_temp);
         display.push_str(&format!("{format_temp} "));
 
@@ -876,6 +899,17 @@ fn long_weather(md: MeteoApiResponse) {
         let humid_strwth = adjust_len_left(format!("{}%", humid[i]), 4);
         let format_humid = add_fg_esc(&humid_strwth, &rgb_humid);
         display.push_str(&format!("{format_humid} "));
+
+        // WET BULB
+        let wb = compute_wet_bulb(temp[i], humid[i]);
+        let rgb_wb = match wb {
+            x if x > 95.0 => RED,
+            x if (70.0..95.0).contains(&x) => rgb_lerp(wb, 70.0, 95.0, &WHITE, &RED),
+            x if x < 70.0 => WHITE,
+            _ => rgb_lerp(wb, -100.0, 130.0, &BLACK, &WHITE),
+        };
+        let format_wb = add_fg_esc(&format!("{:.1}° ", wb), &rgb_wb);
+        display.push_str(&format!("{}", format_wb));
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i], 0.0, 100.0, &ICE_BLUE, &DEEP_BLUE);
@@ -902,7 +936,6 @@ fn long_weather(md: MeteoApiResponse) {
             get_moon_phase(time[i]),
         );
         display.push_str(&format!("{:<3}\n", format_wmo));
-
     }
     print!("{}", display);
     optional_runtime_update();
