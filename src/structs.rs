@@ -81,4 +81,5 @@ pub struct DailyData {
     pub sunset: Vec<u32>,
     pub precipitation_probability_max: Vec<i32>,
     pub wind_speed_10m_max: Vec<f32>,
+    pub weather_code: Vec<u8>,
 }

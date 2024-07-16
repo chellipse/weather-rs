@@ -160,13 +160,13 @@ lazy_static! {
 
     // days worth of past data to request, must be >= 1
     static ref PAST_DAYS: i32 = match SETTINGS.mode {
-        Mode::Week => 2,
+        // Mode::Week => 2,
         _ => 2,
     };
     // days of future data to request, must be >= 2
     static ref FORECAST_DAYS: i32 = match SETTINGS.mode {
-        Mode::Week => 12,
-        _ => 12,
+        // Mode::Week => 14,
+        _ => 14,
     };
 
 }
@@ -286,7 +286,7 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             "current=temperature_2m,relative_humidity_2m,weather_code&",
             "hourly=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "minutely_15=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
-            "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max&",
+            "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max,weather_code&",
             "temperature_unit={}&",  // <--
             "wind_speed_unit=mph&",
             "timeformat=unixtime&",
@@ -862,7 +862,7 @@ fn hourly_weather(md: MeteoApiResponse) {
     // display collector
     let mut display = String::new();
 
-    display.push_str(&format!("{:>6} {:6}{:bar$}{:>5}{:>3}{:>8} {:bar$} {:>5}    {:<8}\n",
+    display.push_str(&format!("{:>6}  {:6}{:bar$}{:>5}{:>3}{:>8} {:bar$} {:>5}    {:<8}\n",
         "TIME",
         "TEMP",
         "TEMP-BAR",
@@ -893,7 +893,7 @@ fn hourly_weather(md: MeteoApiResponse) {
 
         // temp
         let rgb_temp = get_temp_rgb(temp[i]);
-        let format_temp = add_fg_esc(&format!("{:.1}°", temp[i]), &rgb_temp);
+        let format_temp = add_fg_esc(&format!("{:5.1}°", temp[i]), &rgb_temp);
         display.push_str(&format!("{format_temp} "));
 
         // temp bar
@@ -1116,6 +1116,26 @@ macro_rules! di_add {
     };
 }
 
+fn get_wb_rgb(wb: f32) -> Rgb {
+    match wb {
+        x if x > 95.0 => RED,
+        x if (70.0..95.0).contains(&x) => rgb_lerp(wb, 70.0, 95.0, &WHITE, &RED),
+        x if x < 70.0 => WHITE,
+        _ => rgb_lerp(wb, -100.0, 130.0, &BLACK, &WHITE),
+    }
+}
+
+use chrono::{DateTime, Datelike, Utc, Weekday};
+
+fn timestamp_to_date_components(timestamp: i64) -> (u32, u32, Weekday, i32) {
+    let datetime: DateTime<Utc> = DateTime::from_timestamp(timestamp, 0).unwrap();
+    let month = datetime.month();
+    let day = datetime.day();
+    let weekday = datetime.weekday();
+    let year = datetime.year();
+    (month, day, weekday, year)
+}
+
 fn weekly_weather(md: MeteoApiResponse) {
     const CHUNK_LEN: usize = 24 * 4;
     // let time_data = &md.minutely_15.time;
@@ -1123,42 +1143,97 @@ fn weekly_weather(md: MeteoApiResponse) {
 
     let mut di: Vec<String> = vec![String::new(); (*PAST_DAYS + *FORECAST_DAYS) as usize];
 
+    for (i, y) in md.minutely_15.time.chunks(CHUNK_LEN).enumerate() {
+        assert!(y.len() == CHUNK_LEN);
+
+        if i == *PAST_DAYS as usize {
+            di[i].push_str(&format!("\x1b[0m{} ", add_bg_esc(">", &PURPLE)));
+        } else {
+            di[i].push_str(&format!("\x1b[0m  "));
+        };
+
+        let timestamp = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as i64;
+        let (month, day, weekday, _) = timestamp_to_date_components(timestamp);
+        di_add!(di[i], format!("{weekday} {month:>2}-{day:<2}"), &WHITE);
+    }
+
     let gl_min = md.minutely_15.temperature_2m.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
     let gl_max = md.minutely_15.temperature_2m.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
-    for (x, y) in md.minutely_15.temperature_2m.chunks(CHUNK_LEN).enumerate() {
-        assert!(y.len() == CHUNK_LEN);
-        di_add!(di[x], format!("{:3} ", x as i32 - 2), &WHITE);
-
+    for (i, y) in md.minutely_15.temperature_2m.chunks(CHUNK_LEN).enumerate() {
         let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
         let rgb_min = get_temp_rgb(min);
-        di_add!(di[x], format!("{:.1} ", min), rgb_min);
+        di_add!(di[i], format!("{:>6.1}", min), rgb_min);
 
         let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
         let rgb_max = get_temp_rgb(max);
-        di_add!(di[x], format!("{:.1} ", max), rgb_max);
+        di_add!(di[i], format!("{:->6.1}", max), rgb_max);
 
         let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
         let rgb_mean = get_temp_rgb(mean);
-        di_add!(di[x], format!("{:.1} ", mean), rgb_mean);
+        di_add!(di[i], format!("{:>6.1}", mean), rgb_mean);
 
-        let mean_bar = mk_bar(&mean, &gl_min, &gl_max, &1.0, *BAR_MAX.lock().unwrap());
-        di_add!(di[x], format!("{:} ", mean_bar), rgb_mean);
+        let lcl_bar_max = *BAR_MAX.lock().unwrap() - 4;
+        let mean_bar = mk_bar(&mean, &gl_min, &gl_max, &1.0, lcl_bar_max);
+        di_add!(di[i], format!("{:>bar$} ", mean_bar, bar = lcl_bar_max + 1), rgb_mean);
     }
 
-    for (x, y) in md.minutely_15.relative_humidity_2m.chunks(CHUNK_LEN).enumerate() {
+    for (i, y) in md.minutely_15.relative_humidity_2m.chunks(CHUNK_LEN).enumerate() {
         assert!(y.len() == CHUNK_LEN);
 
         let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
         let rgb_min = rgb_lerp(min, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[x], format!("{:.1} ", min), rgb_min);
+        di_add!(di[i], format!("{:>4.0}%", min), rgb_min);
 
         let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
         let rgb_max = rgb_lerp(max, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[x], format!("{:.1} ", max), rgb_max);
+        di_add!(di[i], format!("{:->4.0}%", max), rgb_max);
 
         let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
         let rgb_mean = rgb_lerp(mean, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[x], format!("{:.1} ", mean), rgb_mean);
+        di_add!(di[i], format!("{:>4.0}%", mean), rgb_mean);
+    }
+
+    let wbs = {
+        let mut wbs: Vec<f32> = vec![];
+        for i in 0..md.minutely_15.relative_humidity_2m.len() {
+            wbs.push(compute_wet_bulb(md.minutely_15.temperature_2m[i], md.minutely_15.relative_humidity_2m[i]))
+        }
+        wbs
+    };
+    for (i, y) in wbs.chunks(CHUNK_LEN).enumerate() {
+        assert!(y.len() == CHUNK_LEN);
+
+        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let rgb_min = get_wb_rgb(min);
+        di_add!(di[i], format!("{:>6.1}", min), rgb_min);
+
+        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let rgb_max = get_wb_rgb(max);
+        di_add!(di[i], format!("{:->6.1}", max), rgb_max);
+
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let rgb_mean = get_wb_rgb(mean);
+        di_add!(di[i], format!("{:>6.1}", mean), rgb_mean);
+    }
+
+    for (i, y) in md.minutely_15.wind_speed_10m.chunks(CHUNK_LEN).enumerate() {
+        assert!(y.len() == CHUNK_LEN);
+
+        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let rgb_min = rgb_lerp(min, 30.0, 90.0, &WHITE, &DEEP_BLUE);
+        di_add!(di[i], format!("{:>3.0}", min), rgb_min);
+
+        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let rgb_max = rgb_lerp(max, 30.0, 90.0, &WHITE, &DEEP_BLUE);
+        di_add!(di[i], format!("{:->3.0}", max), rgb_max);
+
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let rgb_mean = rgb_lerp(mean, 30.0, 90.0, &WHITE, &DEEP_BLUE);
+        di_add!(di[i], format!("{:>3.0}", mean), rgb_mean);
+    }
+
+    for (i, wc) in md.daily.weather_code.iter().enumerate() {
+        di[i].push_str(&format!(" {:<}", wmo_decode(*wc, true, get_moon_phase(md.daily.time[i]))));
     }
 
     for line in di.into_iter() {
