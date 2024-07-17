@@ -565,6 +565,7 @@ fn one_line_weather(md: MeteoApiResponse) {
 }
 
 // add or remove characters from the right until len == max
+#[deprecated(note = "Use format!() instead")]
 fn adjust_len_right(mut msg: String, max: usize) -> String {
     let current_length = msg.chars().count();
 
@@ -584,6 +585,7 @@ fn adjust_len_right(mut msg: String, max: usize) -> String {
 }
 
 // add or remove characters from the left until len == max
+#[deprecated(note = "Use format!() instead")]
 fn adjust_len_left(mut msg: String, max: usize) -> String {
     let current_length = msg.chars().count();
 
@@ -646,6 +648,7 @@ fn to_am_pm(time: i64) -> String {
 }
 
 // print time stamp in ms if "--runtime-info" was submitted
+#[deprecated(note = "Remove")]
 fn optional_runtime_update() {
     if SETTINGS.runtime_info {
         println!(
@@ -669,6 +672,7 @@ fn get_time_index(time_data: &[u32]) -> usize {
 
 // defines global variables about what shape data should be displayed in
 // using term height and width
+#[deprecated(note = "Move to lazy static")]
 fn define_dimensions() {
     // let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 15 + 1;
     let min_width_without_bars: usize = 2+5+6+5+5+6+10;
