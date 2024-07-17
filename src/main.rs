@@ -684,7 +684,7 @@ fn define_dimensions() {
             *TERM_WIDTH.lock().unwrap() = width;
             *TERM_HEIGHT.lock().unwrap() = height;
         }
-        None => println!("Unable to get terminal size"),
+        None => eprintln!("Unable to get terminal size"),
     }
     // println!("{}x{}", w, h, );
 
@@ -817,6 +817,8 @@ fn get_temp_rgb(temp: f32) -> Rgb {
 
 // displays hourly weather info for the CLI
 fn hourly_weather(md: MeteoApiResponse) {
+    // defines global variables about what shape data should be displayed in
+    define_dimensions();
     let sunset  = md.daily.sunset[*PAST_DAYS as usize];
     let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
 
@@ -1137,6 +1139,8 @@ fn timestamp_to_date_components(timestamp: i64) -> (u32, u32, Weekday, i32) {
 }
 
 fn weekly_weather(md: MeteoApiResponse) {
+    // defines global variables about what shape data should be displayed in
+    define_dimensions();
     const CHUNK_LEN: usize = 24 * 4;
     // let time_data = &md.minutely_15.time;
     // let current_time_index = get_time_index(time_data);
@@ -1290,8 +1294,6 @@ fn main() {
     };
     optional_runtime_update();
 
-    // defines global variables about what shape data should be displayed in
-    define_dimensions();
 
     match &SETTINGS.mode {
         Mode::Current => {
