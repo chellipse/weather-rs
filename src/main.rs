@@ -4,13 +4,12 @@ use lazy_static::lazy_static;
 use reqwest::Error;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::cmp::Ordering;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Mutex;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
@@ -25,7 +24,7 @@ enum Mode {
 #[derive(Clone, Debug)]
 enum EmojiMode {
     NerdFont,
-    Classic,
+    Original,
     Technical,
 }
 
@@ -39,7 +38,6 @@ enum TempScale {
 struct Settings {
     mode: Mode,
     quiet: bool,
-    runtime_info: bool,
     no_color: bool,
     cache_override: bool,
     emoji: EmojiMode,
@@ -54,7 +52,6 @@ struct Rgb {
 
 lazy_static! {
     // used for tracking with option --runtime-info
-    static ref START_TIME: Mutex<Instant> = Mutex::new(Instant::now());
     static ref SYSTEM_TIME: u64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(n) => {
             n.as_secs()
@@ -83,24 +80,21 @@ lazy_static! {
         let mut settings = Settings {
             mode: Mode::Day,
             quiet: false,
-            runtime_info: false,
             no_color: false,
             cache_override: false,
             emoji: EmojiMode::Technical,
             temp_scale: TempScale::Fahrenheit,
         };
+        let pkg_name = env!("CARGO_PKG_NAME");
+        let version = env!("CARGO_PKG_VERSION");
         for arg in env::args().skip(1) {
             match arg.as_str() {
                 "--" => break,
                 "--version" => {
-                    let pkg_name = env!("CARGO_PKG_NAME");
-                    let version = env!("CARGO_PKG_VERSION");
                     println!("{pkg_name}: {version}");
                     process::exit(0);
                 }
                 "--help" => {
-                    let pkg_name = env!("CARGO_PKG_NAME");
-                    let version = env!("CARGO_PKG_VERSION");
                     print!("{pkg_name}: {version}\n{HELP_MSG}");
                     process::exit(0);
                 }
@@ -110,21 +104,15 @@ lazy_static! {
                 "--short" => {
                     settings.mode = Mode::Current;
                     settings.no_color = true;
-                },
-                "--refresh" => settings.cache_override = true,
-                "--runtime-info" => settings.runtime_info = true,
-                "--no-color" => {
-                    settings.no_color = true;
-                },
-                "--emoji-nf" => {
                     settings.emoji = EmojiMode::NerdFont;
                 },
-                "--emoji-classic" => {
-                    settings.emoji = EmojiMode::Classic;
-                },
-                "--emoji-tech" => {
-                    settings.emoji = EmojiMode::Technical;
-                },
+                "--refresh" => settings.cache_override = true,
+                "--fahrenheit" => settings.temp_scale = TempScale::Fahrenheit,
+                "--celsius" => settings.temp_scale = TempScale::Celsius,
+                "--no-color" => settings.no_color = true,
+                "--emoji-nf" => settings.emoji = EmojiMode::NerdFont,
+                "--emoji-original" => settings.emoji = EmojiMode::Original,
+                "--emoji-tech" => settings.emoji = EmojiMode::Technical,
                 arg if arg.starts_with("--") => {
                     println!("Unrecognized option: {arg}");
                     process::exit(0);
@@ -132,16 +120,28 @@ lazy_static! {
                 arg if arg.starts_with('-') => {
                     for char in arg.chars().skip(1) {
                         match char {
+                            'v' => {
+                                println!("{pkg_name}: {version}");
+                                process::exit(0);
+                            }
+                            'h' => {
+                                print!("{pkg_name}: {version}\n{HELP_MSG}");
+                                process::exit(0);
+                            }
                             'q' => settings.quiet = true,
                             'w' => settings.mode = Mode::Week,
                             'd' => settings.mode = Mode::Day,
                             's' => {
                                 settings.mode = Mode::Current;
                                 settings.no_color = true;
+                                settings.emoji = EmojiMode::NerdFont;
                             },
                             'r' => settings.cache_override = true,
                             'f' => settings.temp_scale = TempScale::Fahrenheit,
                             'c' => settings.temp_scale = TempScale::Celsius,
+                            'n' => settings.emoji = EmojiMode::NerdFont,
+                            'o' => settings.emoji = EmojiMode::Original,
+                            't' => settings.emoji = EmojiMode::Technical,
                             _ => {
                                 println!("Unrecognized option: -{char}");
                                 process::exit(0);
@@ -190,19 +190,18 @@ const HELP_MSG: &str = "USAGE: weather [OPTIONS]
   List weather information using Lat/Lon from ip-api.com with open-meteo.com
 
 OPTIONS
-      --help             Display this help message, then exit
-      --version          Display package name and version, then exit
-  -c                     Use Fahrenheit
-  -f                     Use Celcius
-  -l, --long             Display hourly forecast
-  -s, --short            Display hourly forecast
+  -h, --help             Display this help message, then exit
+  -v, --version          Display package name and version, then exit
+  -f, --fahrenheit       Use Fahrenheit
+  -c, --celsius          Use Celcius
+  -w, --week             Display hourly forecast
+  -d, --day              Display hourly forecast
   -q, --quiet            Disable non-Err messages
       --no-color         Disable coler escapes
-  -r, --force-refresh    Disregard cache
-      --runtime-info     Display updates on program speed in ms
-      --emoji-classic    Use Classic Emojis
-      --emoji-tech       Use Technical Emojis
-      --emoji-nf         Use NerdFonts instead of Emojis
+  -r, --refresh          Disregard cache
+  -t, --emoji-tech       Use Technical Emojis (default)
+  -o, --emoji-original   Use Classic Emojis
+  -n, --emoji-nf         Use NerdFonts instead of Emojis
 ";
 
 // colors to use with rgb_lerp
@@ -244,7 +243,6 @@ async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
     }
 
     let response = reqwest::get(url).await?.json::<T>().await?;
-    optional_runtime_update();
 
     Ok(response)
 }
@@ -339,7 +337,7 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             90..=99 => ("N/A 90-99      ", &CLEAR_BLUE),
             _ =>       ("N/A            ", &CLEAR_BLUE),
         },
-        (EmojiMode::Classic, false) => match wmo {
+        (EmojiMode::Original, false) => match wmo {
             0 =>       ("🌒 Clear         ", &CLEAR_BLUE),
             1 =>       ("🌃 Clear~        ", &CLEAR_BLUE),
             2 =>       ("☁️ Cloudy~        ", &L_GRAY),
@@ -373,7 +371,7 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
             _ =>       ("N/A              ", &CLEAR_BLUE),
         },
-        (EmojiMode::Classic, true) => match wmo {
+        (EmojiMode::Original, true) => match wmo {
             0 =>       ("☀️ Clear          ", &ALT_YELLOW),
             1 =>       ("🌇 Clear~        ", &ALT_YELLOW),
             2 =>       ("⛅ Cloudy~       ", &L_GRAY),
@@ -564,47 +562,6 @@ fn one_line_weather(md: MeteoApiResponse) {
     );
 }
 
-// add or remove characters from the right until len == max
-#[deprecated(note = "Use format!() instead")]
-fn adjust_len_right(mut msg: String, max: usize) -> String {
-    let current_length = msg.chars().count();
-
-    match current_length.cmp(&max) {
-        Ordering::Less => {
-            // Add spaces to the right side
-            msg.push_str(&" ".repeat(max - current_length));
-        }
-        Ordering::Greater => {
-            // Remove characters from the right side
-            msg = msg.chars().take(max).collect();
-        }
-        Ordering::Equal => {}
-    }
-
-    msg
-}
-
-// add or remove characters from the left until len == max
-#[deprecated(note = "Use format!() instead")]
-fn adjust_len_left(mut msg: String, max: usize) -> String {
-    let current_length = msg.chars().count();
-
-    match current_length.cmp(&max) {
-        Ordering::Less => {
-            // Add spaces to the left side
-            let spaces = " ".repeat(max - current_length);
-            msg = format!("{spaces}{msg}");
-        }
-        Ordering::Greater => {
-            // Remove characters from the left side
-            msg = msg.chars().skip(current_length - max).collect();
-        }
-        Ordering::Equal => {}
-    }
-
-    msg
-}
-
 // makes a bar as val moves between low and high
 fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
     let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
@@ -622,7 +579,7 @@ fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> St
         _ => "*",
     };
     blocks.push_str(conversion);
-    let result = adjust_len_right(blocks, bar_max);
+    let result = format!("{:1$}", blocks, bar_max);
     result.to_string()
 }
 
@@ -645,17 +602,6 @@ fn to_am_pm(time: i64) -> String {
             format!("{time}*")
         }
     }
-}
-
-// print time stamp in ms if "--runtime-info" was submitted
-#[deprecated(note = "Remove")]
-fn optional_runtime_update() {
-    if SETTINGS.runtime_info {
-        println!(
-            "Elapsed time: {} ms",
-            START_TIME.lock().unwrap().elapsed().as_millis()
-        );
-    };
 }
 
 // checks which Unix timestamp is within 15min of system time
@@ -884,16 +830,16 @@ fn hourly_weather(md: MeteoApiResponse) {
     for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
         // hour title
         if i == START_DISPLAY {
-            display.push_str(&format!("\x1b[0m{} ", add_bg_esc(">", &PURPLE)));
+            display.push_str(&format!("{} ", add_bg_esc(">", &PURPLE)));
         } else {
-            display.push_str(&format!("\x1b[0m  "));
+            display.push_str(&format!("  "));
         };
 
         // hour
         let time_offset = time[i] as i64 + md.utc_offset_seconds;
         let hour = (time_offset / 3600) % 24; // 3600 seconds in an hour
         let am_pm = to_am_pm(hour);
-        let hour_stdwth = adjust_len_left(am_pm.to_string(), 4);
+        let hour_stdwth = format!("{:>4}", am_pm);
         let hour_format = add_fg_esc(&hour_stdwth, &WHITE);
         display.push_str(&format!("{hour_format} "));
 
@@ -909,7 +855,7 @@ fn hourly_weather(md: MeteoApiResponse) {
 
         // humidity
         let rgb_humid = rgb_lerp(humid[i], 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        let humid_strwth = adjust_len_left(format!("{}%", humid[i]), 4);
+        let humid_strwth = format!("{:3}%", humid[i]);
         let format_humid = add_fg_esc(&humid_strwth, &rgb_humid);
         display.push_str(&format!("{format_humid} "));
 
@@ -926,7 +872,7 @@ fn hourly_weather(md: MeteoApiResponse) {
 
         // precipitation
         let rgb_precip = rgb_lerp(precip[i], 0.0, 100.0, &ICE_BLUE, &DEEP_BLUE);
-        let precip_strwth = adjust_len_left(format!("{}%", precip[i]), 4);
+        let precip_strwth = format!("{:3}%", precip[i]);
         let format_precip = add_fg_esc(&precip_strwth, &rgb_precip);
         display.push_str(&format!("{format_precip} "));
 
@@ -948,10 +894,11 @@ fn hourly_weather(md: MeteoApiResponse) {
             time[i] < sunset && time[i] > sunrise,
             get_moon_phase(time[i]),
         );
-        display.push_str(&format!("{:<3}\n", format_wmo));
+        display.push_str(&format!("{:<3}", format_wmo));
+
+        display.push_str(&format!("\x1b[0m\n"));
     }
     print!("{}", display);
-    optional_runtime_update();
 }
 
 // check if the cache is recent
@@ -1250,7 +1197,6 @@ fn weekly_weather(md: MeteoApiResponse) {
 }
 
 fn main() {
-    optional_runtime_update();
     let weather_data: MeteoApiResponse = match check_cache(&*SAVE_LOCATION) {
         // cache exists
         true => {
@@ -1296,7 +1242,6 @@ fn main() {
             no_cache_arm()
         }
     };
-    optional_runtime_update();
 
 
     match &SETTINGS.mode {
