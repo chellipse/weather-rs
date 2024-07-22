@@ -1102,9 +1102,9 @@ fn weekly_weather(md: MeteoApiResponse) {
         assert!(y.len() == CHUNK_LEN);
 
         if i == *PAST_DAYS as usize {
-            di[i].push_str(&format!("\x1b[0m{} ", add_bg_esc(">", &PURPLE)));
+            di[i].push_str(&format!("{} ", add_bg_esc(">", &PURPLE)));
         } else {
-            di[i].push_str(&format!("\x1b[0m  "));
+            di[i].push_str(&format!("  "));
         };
 
         let timestamp = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as i64;
@@ -1192,7 +1192,7 @@ fn weekly_weather(md: MeteoApiResponse) {
     }
 
     for line in di.into_iter() {
-        println!("{line}");
+        println!("{line}\x1b[0m");
     }
 }
 
