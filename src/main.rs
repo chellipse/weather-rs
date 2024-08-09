@@ -620,28 +620,25 @@ fn get_time_index(time_data: &[u32]) -> usize {
 // using term height and width
 #[deprecated(note = "Move to lazy static")]
 fn define_dimensions() {
-    // let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 15 + 1;
     let min_width_without_bars: usize = 2+5+6+5+5+6+10;
     let max_width = 80;
     let bar_count: usize = 2;
-    // defaults are the expected minimum
-    let mut w: usize = (BAR_MIN + 1) * bar_count + min_width_without_bars;
-    let mut h: usize = 0;
+    let mut w = TERM_WIDTH.lock().unwrap();
+    let mut h = TERM_HEIGHT.lock().unwrap();
     match term_size::dimensions() {
         Some((width, height)) => {
-            if width < max_width {w = width} else {w = max_width};
-            h = height;
-            *TERM_WIDTH.lock().unwrap() = width;
-            *TERM_HEIGHT.lock().unwrap() = height;
+            if width < max_width {*w = width} else {*w = max_width};
+            *h = height;
         }
-        None => eprintln!("Unable to get terminal size"),
+        None => {
+            eprintln!("Unable to get terminal size")
+        },
     }
-    // println!("{}x{}", w, h, );
 
-    *BAR_MAX.lock().unwrap() = (w - min_width_without_bars - bar_count) / 2;
+    *BAR_MAX.lock().unwrap() = (*w - min_width_without_bars - bar_count) / 2;
 
     let full_res_h: usize = (START_DISPLAY + END_DISPLAY) / 4;
-    match h {
+    match *h {
         x if x > full_res_h => { // will use default (4)
         }
         x if x <= full_res_h && x > (full_res_h * 2 / 3) => {

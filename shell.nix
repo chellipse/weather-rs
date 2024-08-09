@@ -18,14 +18,12 @@ let
 
 in
   pkgs.mkShell {
-    nativeBuildInputs = with unstable; [
-    # nixd
-    # gcc
+    nativeBuildInputs = [
     rust
-    # rust-analyzer
+
     # dep
-    openssl
-    pkg-config
+    pkgs.openssl
+    pkgs.pkg-config
   ];
 
   # Certain Rust tools won't work without this
