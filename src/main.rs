@@ -864,7 +864,7 @@ fn hourly_weather(md: MeteoApiResponse) {
             x if x < 70.0 => WHITE,
             _ => rgb_lerp(wb, -100.0, 130.0, &BLACK, &WHITE),
         };
-        let format_wb = add_fg_esc(&format!("{:.1}° ", wb), &rgb_wb);
+        let format_wb = add_fg_esc(&format!("{:4.1}° ", wb), &rgb_wb);
         display.push_str(&format!("{}", format_wb));
 
         // precipitation
