@@ -14,6 +14,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
 
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+enum MyError {
+    InvalidLatitude(f32),
+    InvalidLongitude(f32),
+}
+
 #[derive(Clone, Debug)]
 enum Mode {
     Current,
@@ -34,6 +41,24 @@ enum TempScale {
     Celsius,
 }
 
+#[derive(Clone, Debug, Copy)]
+struct LatLon {
+    // range: -90 to +90
+    lat: f32,
+    // range: -180 to +180
+    lon: f32,
+}
+
+impl LatLon {
+    fn new(lat: f32, lon: f32) -> Result<Self, MyError> {
+        match (lat, lon) {
+            (lat, _) if lat < -90.0 || lat > 90.0 => Err(MyError::InvalidLatitude(lat)),
+            (_, lon) if lon < -180.0 || lon > 180.0 => Err(MyError::InvalidLongitude(lon)),
+            (lat, lon) => Ok(Self {lat, lon}),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Settings {
     mode: Mode,
@@ -42,6 +67,7 @@ struct Settings {
     cache_override: bool,
     emoji: EmojiMode,
     temp_scale: TempScale,
+    latlon: Option<LatLon>,
 }
 
 struct Rgb {
@@ -84,6 +110,7 @@ lazy_static! {
             cache_override: false,
             emoji: EmojiMode::Technical,
             temp_scale: TempScale::Fahrenheit,
+            latlon: None,
         };
         let pkg_name = env!("CARGO_PKG_NAME");
         let version = env!("CARGO_PKG_VERSION");
@@ -115,6 +142,22 @@ lazy_static! {
                 "--emoji-tech" => settings.emoji = EmojiMode::Technical,
                 arg if arg.starts_with("--") => {
                     println!("Unrecognized option: {arg}");
+                    process::exit(0);
+                }
+                x if x.contains(':') => {
+                    if let Some((lats, lons)) = x.split_once(':') {
+                        if let (Ok(lat), Ok(lon)) = (lats.parse::<f32>(), lons.parse::<f32>()) {
+                            match LatLon::new(lat, lon) {
+                                Ok(latlon) => {
+                                    settings.latlon = Some(latlon);
+                                    continue
+                                }
+                                Err(e) => println!("Error parsing \"{arg}\" as latlon: {e:?}")
+                            }
+                        }
+                    }
+
+                    println!("Failed to parse as latlon: {arg}");
                     process::exit(0);
                 }
                 arg if arg.starts_with('-') => {
@@ -249,18 +292,14 @@ async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
 
 // make a url to request for OpenMeteo
 fn make_meteo_url(ip_data: IpApiResponse) -> String {
-    let lat = match ip_data.lat {
-        Some(value) => value,
+    let (lat, lon) = match SETTINGS.latlon {
+        Some(latlon) => (latlon.lat, latlon.lon),
         None => {
-            println!("Using default lat...");
-            DEFAULT_LAT
-        }
-    };
-    let lon = match ip_data.lon {
-        Some(value) => value,
-        None => {
-            println!("Using default lon...");
-            DEFAULT_LON
+            if let (Some(lat), Some(lon)) = (ip_data.lat, ip_data.lon) {
+                (lat, lon)
+            } else {
+                (DEFAULT_LAT, DEFAULT_LON)
+            }
         }
     };
     let timezone = match ip_data.timezone {
@@ -917,6 +956,13 @@ fn is_cache_valid<P: AsRef<Path>>(path: P) -> bool {
                     (TempScale::Celsius,    "°C") => {},
                     (_, _) => return false,
                 }
+
+                // small changes in location can make a big diff fyi
+                if let Some(latlon) = SETTINGS.latlon {
+                    if (latlon.lat - json.latitude).abs() > 0.1  { return false }
+                    if (latlon.lon - json.longitude).abs() > 0.1  { return false }
+                }
+
                 true
             },
             Err(e) => {
@@ -1202,6 +1248,7 @@ fn main() {
                 true => use_cache(),
                 // cache is old
                 false => {
+                    status_update("Cache invalid.");
                     match request_api(IP_URL) {
                         // ip data received
                         Ok(ip_data) => {
