@@ -54,7 +54,7 @@ impl LatLon {
         match (lat, lon) {
             (lat, _) if lat < -90.0 || lat > 90.0 => Err(MyError::InvalidLatitude(lat)),
             (_, lon) if lon < -180.0 || lon > 180.0 => Err(MyError::InvalidLongitude(lon)),
-            (lat, lon) => Ok(Self {lat, lon}),
+            (lat, lon) => Ok(Self { lat, lon }),
         }
     }
 }
@@ -312,7 +312,7 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
 
     let scale = match SETTINGS.temp_scale {
         TempScale::Fahrenheit => "fahrenheit",
-        TempScale::Celsius    => "celsius",
+        TempScale::Celsius => "celsius",
     };
 
     let url = format!(
@@ -340,31 +340,31 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
 #[allow(clippy::match_overlapping_arm)]
 fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
     // println!("{:3?} {:5?} {:8?} {:12?}", &wmo, daynight, moon, &SETTINGS.emoji);
-    let (wmo_s, color) =match (&SETTINGS.emoji, daynight) {
+    let (wmo_s, color) = match (&SETTINGS.emoji, daynight) {
         (EmojiMode::NerdFont, _) => match wmo {
-            0 =>       (" ~Clear       ", &CLEAR_BLUE),
-            1 =>       (" <Clear       ", &CLEAR_BLUE),
-            2 =>       (" ~Cloudy      ", &L_GRAY),
-            3 =>       (" >Cloudy      ", &L_GRAY),
+            0 => (" ~Clear       ", &CLEAR_BLUE),
+            1 => (" <Clear       ", &CLEAR_BLUE),
+            2 => (" ~Cloudy      ", &L_GRAY),
+            3 => (" >Cloudy      ", &L_GRAY),
             44 | 45 => (" ~Foggy       ", &L_GRAY),
-            48 =>      (" Fog+Rime     ", &L_GRAY),
-            51 =>      (" Drizzling-   ", &CLEAR_BLUE),
-            53 =>      (" Drizzling~   ", &MID_BLUE),
-            55 =>      (" Drizzling+   ", &DEEP_BLUE),
-            61 =>      (" Raining-     ", &CLEAR_BLUE),
-            63 =>      (" Raining~     ", &MID_BLUE),
-            65 =>      (" Raining+     ", &DEEP_BLUE),
-            71 =>      (" Snowing-     ", &CLEAR_BLUE),
-            73 =>      (" Snowing~     ", &CLEAR_BLUE),
-            75 =>      (" Snowing+     ", &CLEAR_BLUE),
-            77 =>      (" Snow Grains  ", &CLEAR_BLUE),
-            80 =>      (" Showers-     ", &CLEAR_BLUE),
-            81 =>      (" Showers~     ", &MID_BLUE),
-            82 =>      (" Showers+     ", &DEEP_BLUE),
-            85 =>      (" Snow Showers-", &CLEAR_BLUE),
-            86 =>      (" Snow Showers+", &CLEAR_BLUE),
-            95 =>      (" Thunderstorm~", &YELLOW),
-            0..=9 =>   ("N/A 0-9        ", &CLEAR_BLUE),
+            48 => (" Fog+Rime     ", &L_GRAY),
+            51 => (" Drizzling-   ", &CLEAR_BLUE),
+            53 => (" Drizzling~   ", &MID_BLUE),
+            55 => (" Drizzling+   ", &DEEP_BLUE),
+            61 => (" Raining-     ", &CLEAR_BLUE),
+            63 => (" Raining~     ", &MID_BLUE),
+            65 => (" Raining+     ", &DEEP_BLUE),
+            71 => (" Snowing-     ", &CLEAR_BLUE),
+            73 => (" Snowing~     ", &CLEAR_BLUE),
+            75 => (" Snowing+     ", &CLEAR_BLUE),
+            77 => (" Snow Grains  ", &CLEAR_BLUE),
+            80 => (" Showers-     ", &CLEAR_BLUE),
+            81 => (" Showers~     ", &MID_BLUE),
+            82 => (" Showers+     ", &DEEP_BLUE),
+            85 => (" Snow Showers-", &CLEAR_BLUE),
+            86 => (" Snow Showers+", &CLEAR_BLUE),
+            95 => (" Thunderstorm~", &YELLOW),
+            0..=9 => ("N/A 0-9        ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19      ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29      ", &CLEAR_BLUE),
             30..=39 => ("N/A 30-39      ", &CLEAR_BLUE),
@@ -374,31 +374,31 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             70..=79 => ("N/A 70-79      ", &CLEAR_BLUE),
             80..=89 => ("N/A 80-89      ", &CLEAR_BLUE),
             90..=99 => ("N/A 90-99      ", &CLEAR_BLUE),
-            _ =>       ("N/A            ", &CLEAR_BLUE),
+            _ => ("N/A            ", &CLEAR_BLUE),
         },
         (EmojiMode::Original, false) => match wmo {
-            0 =>       ("🌒 Clear         ", &CLEAR_BLUE),
-            1 =>       ("🌃 Clear~        ", &CLEAR_BLUE),
-            2 =>       ("☁️ Cloudy~        ", &L_GRAY),
-            3 =>       ("☁️ Cloudy         ", &L_GRAY),
-            44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
-            51 =>      ("🌧️ Drizzle~      ", &CLEAR_BLUE),
-            53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
-            55 =>      ("🌧️ Drizzle       ", &DEEP_BLUE),
-            61 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
-            63 =>      ("🌧️ Rainy         ", &MID_BLUE),
-            65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
-            71 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
-            73 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            75 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            77 =>      ("🌨️ Wintry        ", &CLEAR_BLUE),
-            80 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
-            81 =>      ("🌧️ Rainy         ", &MID_BLUE),
-            82 =>      ("🌧️ Rainy         ", &DEEP_BLUE),
-            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
-            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
-            0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
+            0 => ("🌒 Clear         ", &CLEAR_BLUE),
+            1 => ("🌃 Clear~        ", &CLEAR_BLUE),
+            2 => ("☁️ Cloudy~        ", &L_GRAY),
+            3 => ("☁️ Cloudy         ", &L_GRAY),
+            44 | 45 | 48 => ("🌫️ Foggy         ", &L_GRAY),
+            51 => ("🌧️ Drizzle~      ", &CLEAR_BLUE),
+            53 => ("🌧️ Drizzle       ", &MID_BLUE),
+            55 => ("🌧️ Drizzle       ", &DEEP_BLUE),
+            61 => ("🌧️ Rainy~        ", &CLEAR_BLUE),
+            63 => ("🌧️ Rainy         ", &MID_BLUE),
+            65 => ("🌧️ Rain+         ", &DEEP_BLUE),
+            71 => ("❄️ Snowy~         ", &CLEAR_BLUE),
+            73 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            75 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            77 => ("🌨️ Wintry        ", &CLEAR_BLUE),
+            80 => ("🌧️ Rainy~        ", &CLEAR_BLUE),
+            81 => ("🌧️ Rainy         ", &MID_BLUE),
+            82 => ("🌧️ Rainy         ", &DEEP_BLUE),
+            85 => ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 => ("⛈️ Thunderstorms  ", &YELLOW),
+            0..=9 => ("N/A 0-9          ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
             30..=39 => ("N/A 30-39        ", &CLEAR_BLUE),
@@ -408,31 +408,31 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             70..=79 => ("N/A 70-79        ", &CLEAR_BLUE),
             80..=89 => ("N/A 80-89        ", &CLEAR_BLUE),
             90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
-            _ =>       ("N/A              ", &CLEAR_BLUE),
+            _ => ("N/A              ", &CLEAR_BLUE),
         },
         (EmojiMode::Original, true) => match wmo {
-            0 =>       ("☀️ Clear          ", &ALT_YELLOW),
-            1 =>       ("🌇 Clear~        ", &ALT_YELLOW),
-            2 =>       ("⛅ Cloudy~       ", &L_GRAY),
-            3 =>       ("☁️ Cloudy         ", &L_GRAY),
-            44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
-            51 =>      ("🌧️ Drizzle~      ", &CLEAR_BLUE),
-            53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
-            55 =>      ("🌧️ Drizzle       ", &DEEP_BLUE),
-            61 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
-            63 =>      ("🌧️ Rainy         ", &MID_BLUE),
-            65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
-            71 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
-            73 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            75 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            77 =>      ("🌨️ Wintry        ", &CLEAR_BLUE),
-            80 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
-            81 =>      ("🌧️ Rainy         ", &MID_BLUE),
-            82 =>      ("🌧️ Rainy         ", &DEEP_BLUE),
-            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
-            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
-            0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
+            0 => ("☀️ Clear          ", &ALT_YELLOW),
+            1 => ("🌇 Clear~        ", &ALT_YELLOW),
+            2 => ("⛅ Cloudy~       ", &L_GRAY),
+            3 => ("☁️ Cloudy         ", &L_GRAY),
+            44 | 45 | 48 => ("🌫️ Foggy         ", &L_GRAY),
+            51 => ("🌧️ Drizzle~      ", &CLEAR_BLUE),
+            53 => ("🌧️ Drizzle       ", &MID_BLUE),
+            55 => ("🌧️ Drizzle       ", &DEEP_BLUE),
+            61 => ("🌧️ Rainy~        ", &CLEAR_BLUE),
+            63 => ("🌧️ Rainy         ", &MID_BLUE),
+            65 => ("🌧️ Rain+         ", &DEEP_BLUE),
+            71 => ("❄️ Snowy~         ", &CLEAR_BLUE),
+            73 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            75 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            77 => ("🌨️ Wintry        ", &CLEAR_BLUE),
+            80 => ("🌧️ Rainy~        ", &CLEAR_BLUE),
+            81 => ("🌧️ Rainy         ", &MID_BLUE),
+            82 => ("🌧️ Rainy         ", &DEEP_BLUE),
+            85 => ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 => ("⛈️ Thunderstorms  ", &YELLOW),
+            0..=9 => ("N/A 0-9          ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
             30..=39 => ("N/A 30-39        ", &CLEAR_BLUE),
@@ -442,7 +442,7 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             70..=79 => ("N/A 70-79        ", &CLEAR_BLUE),
             80..=89 => ("N/A 80-89        ", &CLEAR_BLUE),
             90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
-            _ =>       ("N/A              ", &CLEAR_BLUE),
+            _ => ("N/A              ", &CLEAR_BLUE),
         },
         // ⛈️ 🌩️
         // 🌥️⛅🌤️
@@ -451,30 +451,30 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
         // ☔️🌪️ 🌇🌆🏙️🌃⛆
         // 🌕🌖🌗🌘🌑🌒🌓🌔
         (EmojiMode::Technical, true) => match wmo {
-            0 =>       ("☀️ Clear         ", &ALT_YELLOW),
-            1 =>       ("🌤️ Clear        ", &ALT_YELLOW),
-            2 =>       ("🏙️ Cloudy       ", &L_GRAY),
-            3 =>       ("☁️ Cloudy         ", &L_GRAY),
+            0 => ("☀️ Clear         ", &ALT_YELLOW),
+            1 => ("🌤️ Clear        ", &ALT_YELLOW),
+            2 => ("🏙️ Cloudy       ", &L_GRAY),
+            3 => ("☁️ Cloudy         ", &L_GRAY),
             // 3 =>       ("⛅Cloudy         ", &L_GRAY),
             // 3 =>       ("🌥️Cloudy         ", &L_GRAY),
-            44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
-            51 =>      ("🌦️ Drizzle~      ", &CLEAR_BLUE),
-            53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
-            55 =>      ("🌧️ Drizzle+       ", &DEEP_BLUE),
-            61 =>      ("🌦️ Rain~        ", &CLEAR_BLUE),
-            63 =>      ("🌧️ Rain         ", &MID_BLUE),
-            65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
-            71 =>      ("❄️ Snow~         ", &CLEAR_BLUE),
-            73 =>      ("❄️ Snow          ", &CLEAR_BLUE),
-            75 =>      ("❄️ Snow+          ", &CLEAR_BLUE),
-            77 =>      ("🌫️ Wintry        ", &CLEAR_BLUE),
-            80 =>      ("🌦️ Rainy~        ", &CLEAR_BLUE),
-            81 =>      ("🌧️ Rainy         ", &MID_BLUE),
-            82 =>      ("🌧️ Rainy+         ", &DEEP_BLUE),
-            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
-            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
-            0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
+            44 | 45 | 48 => ("🌫️ Foggy         ", &L_GRAY),
+            51 => ("🌦️ Drizzle~      ", &CLEAR_BLUE),
+            53 => ("🌧️ Drizzle       ", &MID_BLUE),
+            55 => ("🌧️ Drizzle+       ", &DEEP_BLUE),
+            61 => ("🌦️ Rain~        ", &CLEAR_BLUE),
+            63 => ("🌧️ Rain         ", &MID_BLUE),
+            65 => ("🌧️ Rain+         ", &DEEP_BLUE),
+            71 => ("❄️ Snow~         ", &CLEAR_BLUE),
+            73 => ("❄️ Snow          ", &CLEAR_BLUE),
+            75 => ("❄️ Snow+          ", &CLEAR_BLUE),
+            77 => ("🌫️ Wintry        ", &CLEAR_BLUE),
+            80 => ("🌦️ Rainy~        ", &CLEAR_BLUE),
+            81 => ("🌧️ Rainy         ", &MID_BLUE),
+            82 => ("🌧️ Rainy+         ", &DEEP_BLUE),
+            85 => ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 => ("⛈️ Thunderstorms  ", &YELLOW),
+            0..=9 => ("N/A 0-9          ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
             30..=39 => ("N/A 30-39        ", &CLEAR_BLUE),
@@ -484,31 +484,31 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             70..=79 => ("N/A 70-79        ", &CLEAR_BLUE),
             80..=89 => ("N/A 80-89        ", &CLEAR_BLUE),
             90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
-            _ =>       ("N/A              ", &CLEAR_BLUE),
+            _ => ("N/A              ", &CLEAR_BLUE),
         },
         (EmojiMode::Technical, false) => match wmo {
-            0 =>       ("%m Clear         ", &CLEAR_BLUE),
-            1 =>       ("%m Clear        ", &CLEAR_BLUE),
-            2 =>       ("🌃 Cloudy       ", &L_GRAY),
-            3 =>       ("☁️ Cloudy         ", &L_GRAY),
-            44|45|48 =>("🌫️ Foggy         ", &L_GRAY),
-            51 =>      ("🌧️ Drizzle~      ", &CLEAR_BLUE),
-            53 =>      ("🌧️ Drizzle       ", &MID_BLUE),
-            55 =>      ("🌧️ Drizzle+       ", &DEEP_BLUE),
-            61 =>      ("🌧️ Rain~        ", &CLEAR_BLUE),
-            63 =>      ("🌧️ Rain         ", &MID_BLUE),
-            65 =>      ("🌧️ Rain+         ", &DEEP_BLUE),
-            71 =>      ("❄️ Snow~         ", &CLEAR_BLUE),
-            73 =>      ("❄️ Snow          ", &CLEAR_BLUE),
-            75 =>      ("❄️ Snow+          ", &CLEAR_BLUE),
-            77 =>      ("🌫️ Wintry        ", &CLEAR_BLUE),
-            80 =>      ("🌧️ Rainy~        ", &CLEAR_BLUE),
-            81 =>      ("🌧️ Rainy         ", &MID_BLUE),
-            82 =>      ("🌧️ Rainy+         ", &DEEP_BLUE),
-            85 =>      ("❄️ Snowy~         ", &CLEAR_BLUE),
-            86 =>      ("❄️ Snowy          ", &CLEAR_BLUE),
-            95 =>      ("⛈️ Thunderstorms  ", &YELLOW),
-            0..=9 =>   ("N/A 0-9          ", &CLEAR_BLUE),
+            0 => ("%m Clear         ", &CLEAR_BLUE),
+            1 => ("%m Clear        ", &CLEAR_BLUE),
+            2 => ("🌃 Cloudy       ", &L_GRAY),
+            3 => ("☁️ Cloudy         ", &L_GRAY),
+            44 | 45 | 48 => ("🌫️ Foggy         ", &L_GRAY),
+            51 => ("🌧️ Drizzle~      ", &CLEAR_BLUE),
+            53 => ("🌧️ Drizzle       ", &MID_BLUE),
+            55 => ("🌧️ Drizzle+       ", &DEEP_BLUE),
+            61 => ("🌧️ Rain~        ", &CLEAR_BLUE),
+            63 => ("🌧️ Rain         ", &MID_BLUE),
+            65 => ("🌧️ Rain+         ", &DEEP_BLUE),
+            71 => ("❄️ Snow~         ", &CLEAR_BLUE),
+            73 => ("❄️ Snow          ", &CLEAR_BLUE),
+            75 => ("❄️ Snow+          ", &CLEAR_BLUE),
+            77 => ("🌫️ Wintry        ", &CLEAR_BLUE),
+            80 => ("🌧️ Rainy~        ", &CLEAR_BLUE),
+            81 => ("🌧️ Rainy         ", &MID_BLUE),
+            82 => ("🌧️ Rainy+         ", &DEEP_BLUE),
+            85 => ("❄️ Snowy~         ", &CLEAR_BLUE),
+            86 => ("❄️ Snowy          ", &CLEAR_BLUE),
+            95 => ("⛈️ Thunderstorms  ", &YELLOW),
+            0..=9 => ("N/A 0-9          ", &CLEAR_BLUE),
             10..=19 => ("N/A 10-19        ", &CLEAR_BLUE),
             20..=29 => ("N/A 20-29        ", &CLEAR_BLUE),
             30..=39 => ("N/A 30-39        ", &CLEAR_BLUE),
@@ -518,20 +518,20 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
             70..=79 => ("N/A 70-79        ", &CLEAR_BLUE),
             80..=89 => ("N/A 80-89        ", &CLEAR_BLUE),
             90..=99 => ("N/A 90-99        ", &CLEAR_BLUE),
-            _ =>       ("N/A              ", &CLEAR_BLUE),
+            _ => ("N/A              ", &CLEAR_BLUE),
         },
     };
     let wmo_string_with_moon = match moon {
         // 🌕🌖🌗🌘🌑🌒🌓🌔
-        MoonPhase::Full        => wmo_s.replace("%m", "🌕"),
-        MoonPhase::WanGib      => wmo_s.replace("%m", "🌖"),
-        MoonPhase::LastQ       => wmo_s.replace("%m", "🌗"),
-        MoonPhase::WanCres     => wmo_s.replace("%m", "🌘"),
-        MoonPhase::New         => wmo_s.replace("%m", "🌑"),
-        MoonPhase::WaxCres     => wmo_s.replace("%m", "🌒"),
-        MoonPhase::FirstQ      => wmo_s.replace("%m", "🌓"),
-        MoonPhase::WaxGib      => wmo_s.replace("%m", "🌔"),
-        MoonPhase::Invalid(n)  => wmo_s.replace("%m", &format!("{}", n)),
+        MoonPhase::Full => wmo_s.replace("%m", "🌕"),
+        MoonPhase::WanGib => wmo_s.replace("%m", "🌖"),
+        MoonPhase::LastQ => wmo_s.replace("%m", "🌗"),
+        MoonPhase::WanCres => wmo_s.replace("%m", "🌘"),
+        MoonPhase::New => wmo_s.replace("%m", "🌑"),
+        MoonPhase::WaxCres => wmo_s.replace("%m", "🌒"),
+        MoonPhase::FirstQ => wmo_s.replace("%m", "🌓"),
+        MoonPhase::WaxGib => wmo_s.replace("%m", "🌔"),
+        MoonPhase::Invalid(n) => wmo_s.replace("%m", &format!("{}", n)),
     };
     add_fg_esc(&format!("{:.10}", wmo_string_with_moon), color)
 }
@@ -584,7 +584,7 @@ fn one_line_weather(md: MeteoApiResponse) {
     };
     let wmo = md.minutely_15.weather_code;
 
-    let sunset  = md.daily.sunset[*PAST_DAYS as usize];
+    let sunset = md.daily.sunset[*PAST_DAYS as usize];
     let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
 
     println!(
@@ -596,7 +596,7 @@ fn one_line_weather(md: MeteoApiResponse) {
             wmo[now],
             time[now] < sunset && time[now] > sunrise,
             get_moon_phase(time[now])
-            ),
+        ),
         precip_max,
     );
 }
@@ -659,19 +659,23 @@ fn get_time_index(time_data: &[u32]) -> usize {
 // using term height and width
 #[deprecated(note = "Move to lazy static")]
 fn define_dimensions() {
-    let min_width_without_bars: usize = 2+5+6+5+5+6+10;
+    let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 6 + 10;
     let max_width = 80;
     let bar_count: usize = 2;
     let mut w = TERM_WIDTH.lock().unwrap();
     let mut h = TERM_HEIGHT.lock().unwrap();
     match term_size::dimensions() {
         Some((width, height)) => {
-            if width < max_width {*w = width} else {*w = max_width};
+            if width < max_width {
+                *w = width
+            } else {
+                *w = max_width
+            };
             *h = height;
         }
         None => {
             eprintln!("Unable to get terminal size")
-        },
+        }
     }
 
     *BAR_MAX.lock().unwrap() = (*w - min_width_without_bars - bar_count) / 2;
@@ -695,15 +699,15 @@ fn define_dimensions() {
 
 fn wind_di_decode(di: i16) -> &'static str {
     match di as f32 {
-        x if (337.5..=360.0).contains(&x) => {"N"},
-        x if (0.0..=22.5).contains(&x) => {"N"},
-        x if (22.5..=67.5).contains(&x) => {"NE"},
-        x if (67.5..=112.5).contains(&x) => {"E"},
-        x if (112.5..=157.5).contains(&x) => {"SE"},
-        x if (157.5..=202.5).contains(&x) => {"S"},
-        x if (202.5..=247.5).contains(&x) => {"SW"},
-        x if (247.5..=292.5).contains(&x) => {"W"},
-        x if (292.5..=337.5).contains(&x) => {"NW"},
+        x if (337.5..=360.0).contains(&x) => "N",
+        x if (0.0..=22.5).contains(&x) => "N",
+        x if (22.5..=67.5).contains(&x) => "NE",
+        x if (67.5..=112.5).contains(&x) => "E",
+        x if (112.5..=157.5).contains(&x) => "SE",
+        x if (157.5..=202.5).contains(&x) => "S",
+        x if (202.5..=247.5).contains(&x) => "SW",
+        x if (247.5..=292.5).contains(&x) => "W",
+        x if (292.5..=337.5).contains(&x) => "NW",
         x => {
             eprintln!("Unhandled Wind Direction: {:?}", x);
             ""
@@ -728,25 +732,25 @@ enum MoonPhase {
 fn get_moon_phase(time: u32) -> MoonPhase {
     let period = 2551442;
     let inc = 2551442 / 8;
-    let remainder = period%8;
-    assert!(period == inc*8+remainder);
+    let remainder = period % 8;
+    assert!(period == inc * 8 + remainder);
 
     // this offset almost certainly drifts overtime
     // it will likely need manual updating
     // LAST UPDATED: UTC -04:00 / 2024-06-06(Thu) 09:28
-    let offset = 86400-3600;
+    let offset = 86400 - 3600;
 
-    let lunar = (time+offset) % period;
+    let lunar = (time + offset) % period;
     match lunar {
-        x if (0    ..=inc            ).contains(&x) => MoonPhase::LastQ,
-        x if (inc  ..=inc*2          ).contains(&x) => MoonPhase::WanCres,
-        x if (inc*2..=inc*3          ).contains(&x) => MoonPhase::New,
-        x if (inc*3..=inc*4          ).contains(&x) => MoonPhase::WaxCres,
-        x if (inc*4..=inc*5          ).contains(&x) => MoonPhase::FirstQ,
-        x if (inc*5..=inc*6          ).contains(&x) => MoonPhase::WaxGib,
-        x if (inc*6..=inc*7          ).contains(&x) => MoonPhase::Full,
-        x if (inc*7..=inc*8+remainder).contains(&x) => MoonPhase::WanGib,
-        x                                           => MoonPhase::Invalid(x),
+        x if (0..=inc).contains(&x) => MoonPhase::LastQ,
+        x if (inc..=inc * 2).contains(&x) => MoonPhase::WanCres,
+        x if (inc * 2..=inc * 3).contains(&x) => MoonPhase::New,
+        x if (inc * 3..=inc * 4).contains(&x) => MoonPhase::WaxCres,
+        x if (inc * 4..=inc * 5).contains(&x) => MoonPhase::FirstQ,
+        x if (inc * 5..=inc * 6).contains(&x) => MoonPhase::WaxGib,
+        x if (inc * 6..=inc * 7).contains(&x) => MoonPhase::Full,
+        x if (inc * 7..=inc * 8 + remainder).contains(&x) => MoonPhase::WanGib,
+        x => MoonPhase::Invalid(x),
     }
 }
 
@@ -754,50 +758,43 @@ fn get_moon_phase(time: u32) -> MoonPhase {
 fn compute_wet_bulb(temp: f32, rh: f32) -> f32 {
     match SETTINGS.temp_scale {
         TempScale::Celsius => {
-            temp * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan()
-            + (temp + rh).atan()
-            - (rh - 1.676331f32).atan()
-            + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
-            - 4.686035f32
-        },
+            temp * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan() + (temp + rh).atan()
+                - (rh - 1.676331f32).atan()
+                + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
+                - 4.686035f32
+        }
         TempScale::Fahrenheit => {
             let temp_c = (temp - 32.0) * 5.0 / 9.0;
             let wb_c = temp_c * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan()
-            + (temp_c + rh).atan()
-            - (rh - 1.676331f32).atan()
-            + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
-            - 4.686035f32;
+                + (temp_c + rh).atan()
+                - (rh - 1.676331f32).atan()
+                + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
+                - 4.686035f32;
             (wb_c * 9.0 / 5.0) + 32.0
-        },
+        }
     }
 }
 
 fn get_temp_rgb(temp: f32) -> Rgb {
     match SETTINGS.temp_scale {
-        TempScale::Fahrenheit => {
-            match temp {
-                x if (105.0..130.0).contains(&x) => rgb_lerp(temp, 105.0, 130.0, &OG4, &OG5),
-                x if (80.0..105.0).contains(&x) => rgb_lerp(temp, 80.0, 105.0, &OG3, &OG4),
-                x if (50.0..80.0).contains(&x) => rgb_lerp(temp, 50.0, 80.0, &OG2, &OG3),
-                x if (32.0..50.0).contains(&x) => rgb_lerp(temp, 32.0, 50.0, &OG1, &OG2),
-                x if (10.0..32.0).contains(&x) => {
-                    rgb_lerp(temp, 10.0, 32.0, &OG0, &OG1)
-                }
-                _ => rgb_lerp(temp, -100.0, 130.0, &BLACK, &WHITE),
-            }
+        TempScale::Fahrenheit => match temp {
+            x if (105.0..130.0).contains(&x) => rgb_lerp(temp, 105.0, 130.0, &OG4, &OG5),
+            x if (80.0..105.0).contains(&x) => rgb_lerp(temp, 80.0, 105.0, &OG3, &OG4),
+            x if (50.0..80.0).contains(&x) => rgb_lerp(temp, 50.0, 80.0, &OG2, &OG3),
+            x if (32.0..50.0).contains(&x) => rgb_lerp(temp, 32.0, 50.0, &OG1, &OG2),
+            x if (10.0..32.0).contains(&x) => rgb_lerp(temp, 10.0, 32.0, &OG0, &OG1),
+            x if x <= 10.0 => OG0,
+            _ => rgb_lerp(temp, -100.0, 130.0, &BLACK, &WHITE),
         },
-        TempScale::Celsius => {
-            match temp {
-                x if (40.56..54.44).contains(&x) => rgb_lerp(temp, 40.56, 54.44, &OG4, &OG5),
-                x if (26.67..40.56).contains(&x) => rgb_lerp(temp, 26.67, 40.56, &OG3, &OG4),
-                x if (10.0..26.67).contains(&x) => rgb_lerp(temp, 10.0, 26.67, &OG2, &OG3),
-                x if (0.0..10.0).contains(&x) => rgb_lerp(temp, 0.0, 10.0, &OG1, &OG2),
-                x if (-12.22..0.0).contains(&x) => {
-                    rgb_lerp(temp, -12.22, 0.0, &OG0, &OG1)
-                }
-                _ => rgb_lerp(temp, -73.33, 54.44, &BLACK, &WHITE),
-            }
-        }
+        TempScale::Celsius => match temp {
+            x if (40.56..54.44).contains(&x) => rgb_lerp(temp, 40.56, 54.44, &OG4, &OG5),
+            x if (26.67..40.56).contains(&x) => rgb_lerp(temp, 26.67, 40.56, &OG3, &OG4),
+            x if (10.0..26.67).contains(&x) => rgb_lerp(temp, 10.0, 26.67, &OG2, &OG3),
+            x if (0.0..10.0).contains(&x) => rgb_lerp(temp, 0.0, 10.0, &OG1, &OG2),
+            x if (-12.22..0.0).contains(&x) => rgb_lerp(temp, -12.22, 0.0, &OG0, &OG1),
+            x if x <= -12.22 => OG0,
+            _ => rgb_lerp(temp, -73.33, 54.44, &BLACK, &WHITE),
+        },
     }
 }
 
@@ -805,7 +802,7 @@ fn get_temp_rgb(temp: f32) -> Rgb {
 fn hourly_weather(md: MeteoApiResponse) {
     // defines global variables about what shape data should be displayed in
     define_dimensions();
-    let sunset  = md.daily.sunset[*PAST_DAYS as usize];
+    let sunset = md.daily.sunset[*PAST_DAYS as usize];
     let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
 
     let time_data = &md.minutely_15.time;
@@ -842,15 +839,16 @@ fn hourly_weather(md: MeteoApiResponse) {
 
         if high - low < gap {
             let diff = gap - (high - low);
-            low -= diff/2.0;
-            high += diff/2.0;
+            low -= diff / 2.0;
+            high += diff / 2.0;
         }
     }
 
     // display collector
     let mut display = String::new();
 
-    display.push_str(&format!("{:>6}  {:6}{:bar$}{:>5}{:>3}{:>8} {:bar$} {:>5}    {:<8}\n",
+    display.push_str(&format!(
+        "{:>6}  {:6}{:bar$}{:>5}{:>3}{:>8} {:bar$} {:>5}    {:<8}\n",
         "TIME",
         "TEMP",
         "TEMP-BAR",
@@ -920,7 +918,10 @@ fn hourly_weather(md: MeteoApiResponse) {
         // wind
         let wind_format = {
             let direction = wind_di_decode(wind_di[i]);
-            format!("\x1b[38;2;222;222;222m{1:>2.0} {0:2}", direction, &wind_spd[i])
+            format!(
+                "\x1b[38;2;222;222;222m{1:>2.0} {0:2}",
+                direction, &wind_spd[i]
+            )
         };
         display.push_str(&format!("{:<3} ", wind_format));
 
@@ -950,21 +951,31 @@ fn is_cache_valid<P: AsRef<Path>>(path: P) -> bool {
     match fs::read_to_string(&path) {
         Ok(string) => match serde_json::from_str::<MeteoApiResponse>(&string) {
             Ok(json) => {
-                if (*SYSTEM_TIME as i64 - json.current.time as i64).unsigned_abs() >= CACHE_TIMEOUT { return false }
-                match (&SETTINGS.temp_scale, json.hourly_units.temperature_2m.as_str()) {
-                    (TempScale::Fahrenheit, "°F") => {},
-                    (TempScale::Celsius,    "°C") => {},
+                if (*SYSTEM_TIME as i64 - json.current.time as i64).unsigned_abs() >= CACHE_TIMEOUT
+                {
+                    return false;
+                }
+                match (
+                    &SETTINGS.temp_scale,
+                    json.hourly_units.temperature_2m.as_str(),
+                ) {
+                    (TempScale::Fahrenheit, "°F") => {}
+                    (TempScale::Celsius, "°C") => {}
                     (_, _) => return false,
                 }
 
                 // small changes in location can make a big diff fyi
                 if let Some(latlon) = SETTINGS.latlon {
-                    if (latlon.lat - json.latitude).abs() > 0.1  { return false }
-                    if (latlon.lon - json.longitude).abs() > 0.1  { return false }
+                    if (latlon.lat - json.latitude).abs() > 0.1 {
+                        return false;
+                    }
+                    if (latlon.lon - json.longitude).abs() > 0.1 {
+                        return false;
+                    }
                 }
 
                 true
-            },
+            }
             Err(e) => {
                 if !SETTINGS.quiet {
                     println!("Failed to read cache JSON with err: {e}");
@@ -1155,8 +1166,20 @@ fn weekly_weather(md: MeteoApiResponse) {
         di_add!(di[i], format!("{weekday} {month:>2}-{day:<2}"), &WHITE);
     }
 
-    let gl_min = md.minutely_15.temperature_2m.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
-    let gl_max = md.minutely_15.temperature_2m.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+    let gl_min = md
+        .minutely_15
+        .temperature_2m
+        .iter()
+        .map(|x| *x as f32)
+        .reduce(f32::min)
+        .unwrap();
+    let gl_max = md
+        .minutely_15
+        .temperature_2m
+        .iter()
+        .map(|x| *x as f32)
+        .reduce(f32::max)
+        .unwrap();
     for (i, y) in md.minutely_15.temperature_2m.chunks(CHUNK_LEN).enumerate() {
         let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
         let rgb_min = get_temp_rgb(min);
@@ -1172,10 +1195,19 @@ fn weekly_weather(md: MeteoApiResponse) {
 
         let lcl_bar_max = *BAR_MAX.lock().unwrap() - 4;
         let mean_bar = mk_bar(&mean, &gl_min, &gl_max, &1.0, lcl_bar_max);
-        di_add!(di[i], format!("{:>bar$} ", mean_bar, bar = lcl_bar_max + 1), rgb_mean);
+        di_add!(
+            di[i],
+            format!("{:>bar$} ", mean_bar, bar = lcl_bar_max + 1),
+            rgb_mean
+        );
     }
 
-    for (i, y) in md.minutely_15.relative_humidity_2m.chunks(CHUNK_LEN).enumerate() {
+    for (i, y) in md
+        .minutely_15
+        .relative_humidity_2m
+        .chunks(CHUNK_LEN)
+        .enumerate()
+    {
         assert!(y.len() == CHUNK_LEN);
 
         let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
@@ -1194,7 +1226,10 @@ fn weekly_weather(md: MeteoApiResponse) {
     let wbs = {
         let mut wbs: Vec<f32> = vec![];
         for i in 0..md.minutely_15.relative_humidity_2m.len() {
-            wbs.push(compute_wet_bulb(md.minutely_15.temperature_2m[i], md.minutely_15.relative_humidity_2m[i]))
+            wbs.push(compute_wet_bulb(
+                md.minutely_15.temperature_2m[i],
+                md.minutely_15.relative_humidity_2m[i],
+            ))
         }
         wbs
     };
@@ -1231,7 +1266,10 @@ fn weekly_weather(md: MeteoApiResponse) {
     }
 
     for (i, wc) in md.daily.weather_code.iter().enumerate() {
-        di[i].push_str(&format!(" {:<}", wmo_decode(*wc, true, get_moon_phase(md.daily.time[i]))));
+        di[i].push_str(&format!(
+            " {:<}",
+            wmo_decode(*wc, true, get_moon_phase(md.daily.time[i]))
+        ));
     }
 
     for line in di.into_iter() {
@@ -1286,7 +1324,6 @@ fn main() {
             no_cache_arm()
         }
     };
-
 
     match &SETTINGS.mode {
         Mode::Current => {
