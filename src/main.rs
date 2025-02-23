@@ -323,7 +323,7 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             "current=temperature_2m,relative_humidity_2m,weather_code&",
             "hourly=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "minutely_15=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
-            "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max,weather_code&",
+            "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max,uv_index_clear_sky_max&",
             "temperature_unit={}&",  // <--
             "wind_speed_unit=mph&",
             "timeformat=unixtime&",
@@ -1263,6 +1263,10 @@ fn weekly_weather(md: MeteoApiResponse) {
         let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
         let rgb_mean = rgb_lerp(mean, 30.0, 90.0, &WHITE, &DEEP_BLUE);
         di_add!(di[i], format!("{:>3.0}", mean), rgb_mean);
+    }
+
+    for (i, uv) in md.daily.uv_index_max.iter().enumerate() {
+        di[i].push_str(&format!(" \x1b[0m{:3.1}", uv));
     }
 
     for (i, wc) in md.daily.weather_code.iter().enumerate() {

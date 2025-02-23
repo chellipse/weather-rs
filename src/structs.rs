@@ -36,7 +36,7 @@ pub struct HourlyUnits {
     pub wind_speed_10m: String,
     pub wind_direction_10m: String,
     pub temperature_2m: String,
-    pub weather_code: String
+    pub weather_code: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -82,4 +82,6 @@ pub struct DailyData {
     pub precipitation_probability_max: Vec<i32>,
     pub wind_speed_10m_max: Vec<f32>,
     pub weather_code: Vec<u8>,
+    pub uv_index_max: Vec<f32>,
+    pub uv_index_clear_sky_max: Vec<f32>,
 }
