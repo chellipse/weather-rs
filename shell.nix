@@ -1,33 +1,28 @@
 let
-  rust_overlay = import (builtins.fetchTarball "https://github.com/oxalica/rust-overlay/archive/master.tar.gz");
+  rust_overlay = import (
+    builtins.fetchTarball {
+      url = "https://github.com/oxalica/rust-overlay/archive/0e624f2b1972a34be1a9b35290ed18ea4b419b6f.tar.gz"; # master
+      sha256 = "1z8i8gs2cfwxplr40dlwhgrc7d7wbx0ic7w8dcnfm936228p11rp"; # 2025-05-16T13·49+00
+    }
+  );
 
-  pkgs = import <nixos> { overlays = [ rust_overlay ]; };
-  unstable = import <nixpkgs> { overlays = [ rust_overlay ]; };
+  pkgs = import (fetchTarball {
+    url = "https://github.com/NixOS/nixpkgs/archive/adaa24fbf46737f3f1b5497bf64bae750f82942e.tar.gz"; # nixos-unstable
+    sha256 = "0mmcni35fxs87fnhavfprspczgnnkxyizy8a4x57y98y76c4q4da"; # 2025-05-16T13·49+00
+  }) { overlays = [ rust_overlay ]; };
 
-  # rust = unstable.rust-bin.stable.latest.default.override {
-      # extensions = [ "rust-src" ];
-  # };
-
-  # rust = unstable.rust-bin.beta.latest.default.override {
-    # extensions = [ "rust-src" "rust-analyzer" ];
-  # };
-
-  rust = unstable.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
-    extensions = [ "rust-src" "rustc-codegen-cranelift-preview" ];
-  });
-
+  rust = pkgs.rust-bin.stable.latest.default.override {
+    extensions = [ "rust-src" ];
+  };
 in
-  pkgs.mkShell {
-    nativeBuildInputs = [
+pkgs.mkShell {
+  nativeBuildInputs = [
     rust
 
-    # dep
-    pkgs.openssl
+    ### dep ###
     pkgs.pkg-config
+    pkgs.openssl
   ];
 
-  # Certain Rust tools won't work without this
-  # This can also be fixed by using oxalica/rust-overlay and specifying the rust-src extension
-  # See https://discourse.nixos.org/t/rust-src-not-found-and-other-misadventures-of-developing-rust-on-nixos/11570/3?u=samuela. for more details.
   RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
 }
