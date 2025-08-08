@@ -1,15 +1,16 @@
 // rust weather script
 #![allow(clippy::match_bool)]
-use lazy_static::lazy_static;
-use reqwest::Error;
+use anyhow::{anyhow, Result};
+use clap::{error::ErrorKind, CommandFactory, Parser};
 use serde::de::DeserializeOwned;
-use serde_json::Value;
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process;
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    env,
+    fmt::Write,
+    fs,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 mod structs;
 use structs::{IpApiResponse, MeteoApiResponse};
@@ -17,25 +18,25 @@ use structs::{IpApiResponse, MeteoApiResponse};
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 enum MyError {
-    InvalidLatitude(f32),
-    InvalidLongitude(f32),
+    InvalidLatitude(f64),
+    InvalidLongitude(f64),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, clap::ValueEnum)]
 enum Mode {
     Current,
-    Day,
-    Week,
+    Hourly,
+    Daily,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, clap::ValueEnum)]
 enum EmojiMode {
     NerdFont,
     Original,
     Technical,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, clap::ValueEnum)]
 enum TempScale {
     Fahrenheit,
     Celsius,
@@ -44,13 +45,13 @@ enum TempScale {
 #[derive(Clone, Debug, Copy)]
 struct LatLon {
     // range: -90 to +90
-    lat: f32,
+    lat: f64,
     // range: -180 to +180
-    lon: f32,
+    lon: f64,
 }
 
 impl LatLon {
-    fn new(lat: f32, lon: f32) -> Result<Self, MyError> {
+    fn new(lat: f64, lon: f64) -> Result<Self, MyError> {
         match (lat, lon) {
             (lat, _) if lat < -90.0 || lat > 90.0 => Err(MyError::InvalidLatitude(lat)),
             (_, lon) if lon < -180.0 || lon > 180.0 => Err(MyError::InvalidLongitude(lon)),
@@ -59,15 +60,85 @@ impl LatLon {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
+#[command(
+    version,
+    about = "List weather information using Lat/Lon from ip-api.com with open-meteo.com"
+)]
 struct Settings {
-    mode: Mode,
-    quiet: bool,
+    /// Display weekly instead of hourly
+    #[arg(short = 'w', long = "week", help = "Display weekly forecast")]
+    week: bool,
+
+    /// Display current weather only
+    #[arg(
+        short = 's',
+        long = "short",
+        help = "Display current weather only (sets no-color and nerdfont)"
+    )]
+    short: bool,
+
+    /// Display debug messages
+    #[arg(short, long)]
+    debug: bool,
+
+    /// Disable color escapes
+    #[arg(long)]
     no_color: bool,
-    cache_override: bool,
+
+    /// Disregard cache
+    #[arg(short, long)]
+    refresh: bool,
+
+    /// Use Fahrenheit temperature scale
+    #[arg(short, long)]
+    fahrenheit: bool,
+
+    /// Use Celsius temperature scale
+    #[arg(short, long)]
+    celsius: bool,
+
+    #[arg(long, value_enum, default_value_t = EmojiMode::Technical)]
     emoji: EmojiMode,
-    temp_scale: TempScale,
-    latlon: Option<LatLon>,
+
+    #[arg(help = "Latitude")]
+    lat: Option<f64>,
+
+    #[arg(help = "Longitude")]
+    lon: Option<f64>,
+}
+
+impl Settings {
+    fn mode(&self) -> Mode {
+        if self.week {
+            Mode::Daily
+        } else if self.short {
+            Mode::Current
+        } else {
+            Mode::Hourly
+        }
+    }
+
+    fn temp_scale(&self) -> TempScale {
+        if self.celsius {
+            TempScale::Celsius
+        } else {
+            TempScale::Fahrenheit
+        }
+    }
+
+    fn no_color(&self) -> bool {
+        self.no_color || self.short
+    }
+
+    fn latlon(&self) -> Option<LatLon> {
+        match (self.lat, self.lon) {
+            (Some(lat), Some(lon)) => {
+                Some(LatLon::new(lat, lon).expect("Latitude or Longitude outside valid range"))
+            }
+            _ => None,
+        }
+    }
 }
 
 struct Rgb {
@@ -76,143 +147,104 @@ struct Rgb {
     b: u8,
 }
 
-lazy_static! {
-    // used for tracking with option --runtime-info
-    static ref SYSTEM_TIME: u64 = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(n) => {
-            n.as_secs()
-        },
-        Err(_) => {
-            eprintln!("SystemTime before UNIX EPOCH!");
-            0
-        },
-    };
-    // maximum bar width
-    static ref BAR_MAX: Mutex<usize> = Mutex::new(10);
-    // default hourly resolution (4 because data is 15 minutely)
-    static ref HOURLY_RES: Mutex<usize> = Mutex::new(4);
-    // default term width
-    static ref TERM_WIDTH: Mutex<usize> = Mutex::new(80);
-    // default term height
-    static ref TERM_HEIGHT: Mutex<usize> = Mutex::new(32);
-    // location to save weather data
-    static ref SAVE_LOCATION: PathBuf = {
-        let mut temp_dir = env::temp_dir();
-        temp_dir.push("weather_data_cache.json");
-        temp_dir
-    };
-    // struct used for storing settings
-    static ref SETTINGS: Settings = {
-        let mut settings = Settings {
-            mode: Mode::Day,
-            quiet: false,
-            no_color: false,
-            cache_override: false,
-            emoji: EmojiMode::Technical,
-            temp_scale: TempScale::Fahrenheit,
-            latlon: None,
-        };
-        let pkg_name = env!("CARGO_PKG_NAME");
-        let version = env!("CARGO_PKG_VERSION");
-        for arg in env::args().skip(1) {
-            match arg.as_str() {
-                "--" => break,
-                "--version" => {
-                    println!("{pkg_name}: {version}");
-                    process::exit(0);
-                }
-                "--help" => {
-                    print!("{pkg_name}: {version}\n{HELP_MSG}");
-                    process::exit(0);
-                }
-                "--quiet" => settings.quiet = true,
-                "--week" => settings.mode = Mode::Day,
-                "--day" => settings.mode = Mode::Day,
-                "--short" => {
-                    settings.mode = Mode::Current;
-                    settings.no_color = true;
-                    settings.emoji = EmojiMode::NerdFont;
-                },
-                "--refresh" => settings.cache_override = true,
-                "--fahrenheit" => settings.temp_scale = TempScale::Fahrenheit,
-                "--celsius" => settings.temp_scale = TempScale::Celsius,
-                "--no-color" => settings.no_color = true,
-                "--emoji-nf" => settings.emoji = EmojiMode::NerdFont,
-                "--emoji-original" => settings.emoji = EmojiMode::Original,
-                "--emoji-tech" => settings.emoji = EmojiMode::Technical,
-                arg if arg.starts_with("--") => {
-                    println!("Unrecognized option: {arg}");
-                    process::exit(0);
-                }
-                x if x.contains(':') => {
-                    if let Some((lats, lons)) = x.split_once(':') {
-                        if let (Ok(lat), Ok(lon)) = (lats.parse::<f32>(), lons.parse::<f32>()) {
-                            match LatLon::new(lat, lon) {
-                                Ok(latlon) => {
-                                    settings.latlon = Some(latlon);
-                                    continue
-                                }
-                                Err(e) => println!("Error parsing \"{arg}\" as latlon: {e:?}")
-                            }
-                        }
-                    }
-
-                    println!("Failed to parse as latlon: {arg}");
-                    process::exit(0);
-                }
-                arg if arg.starts_with('-') => {
-                    for char in arg.chars().skip(1) {
-                        match char {
-                            'v' => {
-                                println!("{pkg_name}: {version}");
-                                process::exit(0);
-                            }
-                            'h' => {
-                                print!("{pkg_name}: {version}\n{HELP_MSG}");
-                                process::exit(0);
-                            }
-                            'q' => settings.quiet = true,
-                            'w' => settings.mode = Mode::Week,
-                            'd' => settings.mode = Mode::Day,
-                            's' => {
-                                settings.mode = Mode::Current;
-                                settings.no_color = true;
-                                settings.emoji = EmojiMode::NerdFont;
-                            },
-                            'r' => settings.cache_override = true,
-                            'f' => settings.temp_scale = TempScale::Fahrenheit,
-                            'c' => settings.temp_scale = TempScale::Celsius,
-                            'n' => settings.emoji = EmojiMode::NerdFont,
-                            'o' => settings.emoji = EmojiMode::Original,
-                            't' => settings.emoji = EmojiMode::Technical,
-                            _ => {
-                                println!("Unrecognized option: -{char}");
-                                process::exit(0);
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    println!("Unrecognized option: {arg}");
-                    process::exit(0);
-                }
-            }
+impl Rgb {
+    fn write_fg_esc(&self, dst: &mut impl Write) -> std::fmt::Result {
+        if !SETTINGS.no_color() {
+            write!(dst, "\x1b[38;2;{};{};{}m", self.r, self.g, self.b)?;
         }
-        settings
-    };
+        Ok(())
+    }
 
-    // days worth of past data to request, must be >= 1
-    static ref PAST_DAYS: i32 = match SETTINGS.mode {
-        // Mode::Week => 2,
-        _ => 2,
-    };
-    // days of future data to request, must be >= 2
-    static ref FORECAST_DAYS: i32 = match SETTINGS.mode {
-        // Mode::Week => 14,
-        _ => 14,
-    };
-
+    fn write_bg_esc(&self, dst: &mut impl Write) -> std::fmt::Result {
+        if !SETTINGS.no_color() {
+            write!(dst, "\x1b[48;2;{};{};{}m", self.r, self.g, self.b)?;
+        }
+        Ok(())
+    }
 }
+
+static PAST_DAYS: i32 = 2;
+static FORECAST_DAYS: i32 = 14;
+
+static SAVE_LOCATION: LazyLock<PathBuf> = LazyLock::new(|| {
+    let mut temp_dir = env::temp_dir();
+    temp_dir.push("weather_data_cache.json");
+    temp_dir
+});
+
+static BAR_MAX: LazyLock<usize> = LazyLock::new(|| {
+    let n = (TERM_DIMENSIONS.0 - 54) / 2;
+    n.min(24)
+});
+
+static HOURLY_RES: LazyLock<usize> = LazyLock::new(|| {
+    let full_res_h: usize = (START_DISPLAY + END_DISPLAY) / 4;
+    match TERM_DIMENSIONS.1 {
+        x if x <= full_res_h && x > (full_res_h * 2 / 3) => 6,
+        x if x <= (full_res_h * 2 / 3) && x > (full_res_h / 3) => 8,
+        x if x <= (full_res_h / 3) => 12,
+        _ => 4,
+    }
+});
+
+static TERM_DIMENSIONS: LazyLock<(usize, usize)> =
+    LazyLock::new(|| term_size::dimensions().unwrap_or((80, 32)));
+
+static SYSTEM_TIME: LazyLock<u64> = LazyLock::new(|| {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Wall time before unix epoch")
+        .as_secs()
+});
+
+static SETTINGS: LazyLock<Settings> = LazyLock::new(|| {
+    // Clap doesn't have a good solution for parsing positional args which
+    // might start with a hyphen, so we filter them out and then let it
+    // parse the rest
+    let mut args = Vec::new();
+    let mut lat: Option<f64> = None;
+    let mut lon: Option<f64> = None;
+
+    for x in std::env::args_os() {
+        if let Some(n) = x.to_str().and_then(|s| s.parse::<f64>().ok()) {
+            match (lat, lon) {
+                (None, None) => lat = Some(n),
+                (Some(_), None) => lon = Some(n),
+                // only valid if none of the non-lat/lon args can parse as a valid f64
+                _ => Settings::command()
+                    .error(
+                        ErrorKind::InvalidValue,
+                        format!("unexpected argument '\x1b[33m{n}\x1b[39m' found"),
+                    )
+                    .exit(),
+            }
+        } else {
+            args.push(x);
+        }
+    }
+
+    let mut settings = Settings::parse_from(args);
+
+    assert!(settings.lat.is_none());
+    assert!(settings.lon.is_none());
+
+    match (lat, lon) {
+        (Some(_), Some(_)) => {
+            settings.lat = lat;
+            settings.lon = lon;
+        }
+        (Some(_), None) => Settings::command()
+            .error(
+                ErrorKind::InvalidValue,
+                format!("\x1b[1m[LON]\x1b[22m must be specified if \x1b[1m[LAT]\x1b[22m is"),
+            )
+            .exit(),
+        (None, Some(_)) => unreachable!(),
+        (None, None) => {}
+    }
+
+    settings
+});
 
 // url for ip-api
 const IP_URL: &str = "http://ip-api.com/json/";
@@ -220,32 +252,6 @@ const IP_URL: &str = "http://ip-api.com/json/";
 // prev and future hours to display with Mode::Day * 4 because 15 minutely
 const START_DISPLAY: usize = 6 * 4;
 const END_DISPLAY: usize = 24 * 4;
-
-// default location and timezone
-const DEFAULT_LAT: f32 = 40.7128;
-const DEFAULT_LON: f32 = -74.0060;
-const DEFAULT_TIMEZONE: &str = "America/New_York";
-
-// minimum bar width
-const BAR_MIN: usize = 10;
-
-const HELP_MSG: &str = "USAGE: weather [OPTIONS]
-  List weather information using Lat/Lon from ip-api.com with open-meteo.com
-
-OPTIONS
-  -h, --help             Display this help message, then exit
-  -v, --version          Display package name and version, then exit
-  -f, --fahrenheit       Use Fahrenheit
-  -c, --celsius          Use Celcius
-  -w, --week             Display hourly forecast
-  -d, --day              Display hourly forecast
-  -q, --quiet            Disable non-Err messages
-      --no-color         Disable coler escapes
-  -r, --refresh          Disregard cache
-  -t, --emoji-tech       Use Technical Emojis (default)
-  -o, --emoji-original   Use Classic Emojis
-  -n, --emoji-nf         Use NerdFonts instead of Emojis
-";
 
 // colors to use with rgb_lerp
 const WHITE: Rgb = Rgb { r: 222, g: 222, b: 222 };
@@ -268,54 +274,51 @@ const OG3: Rgb = Rgb { r: 229, g: 219, b: 93 };
 const OG4: Rgb = Rgb { r: 249, g: 203, b: 49 };
 const OG5: Rgb = Rgb { r: 209, g: 68, b: 12 };
 
-// program status updates! if -q or --quiet are passed SETTINGS.quiet = true
-fn status_update<S: std::fmt::Display>(msg: S) {
-    if !SETTINGS.quiet {
-        println!("{msg}");
-    }
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if SETTINGS.debug {
+            println!($($arg)*);
+        }
+    };
 }
 
 // request data from a website
 #[tokio::main]
-async fn request_api<T: DeserializeOwned>(url: &str) -> Result<T, Error> {
-    if !SETTINGS.quiet {
-        println!(
-            "Querying {}...",
-            url.chars().skip(7).take(20).collect::<String>()
-        );
-    }
+async fn request_api<T: DeserializeOwned>(text: &str) -> Result<T> {
+    let url = match text.split_once('?') {
+        Some((base, query)) => {
+            format!("{base}?{}", query.replace('+', "%2B"))
+        }
+        None => {
+            format!("{text}")
+        }
+    };
+    debug!("Querying {url:?}");
 
-    let response = reqwest::get(url).await?.json::<T>().await?;
+    let body = reqwest::get(url).await?.text().await?;
 
-    Ok(response)
+    serde_json::from_str::<T>(&body).map_err(|e| anyhow!("{e:?} from {body:?}"))
 }
 
 // make a url to request for OpenMeteo
-fn make_meteo_url(ip_data: IpApiResponse) -> String {
-    let (lat, lon) = match SETTINGS.latlon {
-        Some(latlon) => (latlon.lat, latlon.lon),
-        None => {
-            if let (Some(lat), Some(lon)) = (ip_data.lat, ip_data.lon) {
-                (lat, lon)
-            } else {
-                (DEFAULT_LAT, DEFAULT_LON)
-            }
-        }
-    };
-    let timezone = match ip_data.timezone {
-        Some(value) => value,
-        None => {
-            println!("Using default timezone...");
-            DEFAULT_TIMEZONE.to_string()
-        }
+fn make_meteo_url(ip_data: &IpApiResponse) -> String {
+    let (lat, lon, timezone) = match SETTINGS.latlon() {
+        Some(latlon) => (
+            latlon.lat,
+            latlon.lon,
+            tzf_rs::DefaultFinder::new()
+                .get_tz_name(latlon.lon, latlon.lat)
+                .to_string(),
+        ),
+        None => (ip_data.lat, ip_data.lon, ip_data.timezone.clone()),
     };
 
-    let scale = match SETTINGS.temp_scale {
+    let scale = match SETTINGS.temp_scale() {
         TempScale::Fahrenheit => "fahrenheit",
         TempScale::Celsius => "celsius",
     };
 
-    let url = format!(
+    let text = format!(
         concat!(
             "http://api.open-meteo.com/v1/forecast?",
             "latitude={}&", // <--
@@ -331,15 +334,15 @@ fn make_meteo_url(ip_data: IpApiResponse) -> String {
             "past_days={}&", // <--
             "forecast_days={}" // <--
         ),
-        lat, lon, scale, timezone, *PAST_DAYS, *FORECAST_DAYS
+        lat, lon, scale, timezone, PAST_DAYS, FORECAST_DAYS
     );
-    url
+
+    text
 }
 
 // turn WMO codes into a message
 #[allow(clippy::match_overlapping_arm)]
-fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
-    // println!("{:3?} {:5?} {:8?} {:12?}", &wmo, daynight, moon, &SETTINGS.emoji);
+fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> (String, &'static Rgb) {
     let (wmo_s, color) = match (&SETTINGS.emoji, daynight) {
         (EmojiMode::NerdFont, _) => match wmo {
             0 => (" ~Clear       ", &CLEAR_BLUE),
@@ -533,38 +536,20 @@ fn wmo_decode(wmo: u8, daynight: bool, moon: MoonPhase) -> String {
         MoonPhase::WaxGib => wmo_s.replace("%m", "🌔"),
         MoonPhase::Invalid(n) => wmo_s.replace("%m", &format!("{}", n)),
     };
-    add_fg_esc(&format!("{:.10}", wmo_string_with_moon), color)
-}
-
-// add an escape sequence to a &str for the foreground color
-fn add_fg_esc(str: &str, color: &Rgb) -> String {
-    if !SETTINGS.no_color {
-        format!("\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, str)
-    } else {
-        str.to_string()
-    }
-}
-
-// add an escape sequence to a &str for the background color
-fn add_bg_esc(str: &str, color: &Rgb) -> String {
-    if !SETTINGS.no_color {
-        format!("\x1b[48;2;{};{};{}m{}", color.r, color.g, color.b, str)
-    } else {
-        str.to_string()
-    }
+    (wmo_string_with_moon, color)
 }
 
 // linearly interpolates A's position between B and C to D and E
-fn lerp(a: f32, b: f32, c: f32, d: f32, e: f32) -> f32 {
+fn lerp(a: f64, b: f64, c: f64, d: f64, e: f64) -> f64 {
     (a - b) * (e - d) / (c - b) + d
 }
 
 // same as lerp() but the output values are Rgb structs
-fn rgb_lerp(x: f32, y: f32, z: f32, color1: &Rgb, color2: &Rgb) -> Rgb {
+fn rgb_lerp(x: f64, y: f64, z: f64, color1: &Rgb, color2: &Rgb) -> Rgb {
     Rgb {
-        r: lerp(x, y, z, color1.r as f32, color2.r as f32) as u8,
-        g: lerp(x, y, z, color1.g as f32, color2.g as f32) as u8,
-        b: lerp(x, y, z, color1.b as f32, color2.b as f32) as u8,
+        r: lerp(x, y, z, color1.r as f64, color2.r as f64) as u8,
+        g: lerp(x, y, z, color1.g as f64, color2.g as f64) as u8,
+        b: lerp(x, y, z, color1.b as f64, color2.b as f64) as u8,
     }
 }
 
@@ -575,7 +560,7 @@ fn one_line_weather(md: MeteoApiResponse) {
 
     let temp = md.minutely_15.temperature_2m;
     let humid = md.minutely_15.relative_humidity_2m;
-    let precip_max = md.daily.precipitation_probability_max[*PAST_DAYS as usize];
+    let precip_max = md.daily.precipitation_probability_max[PAST_DAYS as usize];
     let wind_format = {
         let wind_spd = md.minutely_15.wind_speed_10m[now];
         let wind_di = md.minutely_15.wind_direction_10m[now];
@@ -584,26 +569,24 @@ fn one_line_weather(md: MeteoApiResponse) {
     };
     let wmo = md.minutely_15.weather_code;
 
-    let sunset = md.daily.sunset[*PAST_DAYS as usize];
-    let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
+    let sunset = md.daily.sunset[PAST_DAYS as usize];
+    let sunrise = md.daily.sunrise[PAST_DAYS as usize];
+
+    let (wmo_string, _) = wmo_decode(
+        wmo[now],
+        time[now] < sunset && time[now] > sunrise,
+        get_moon_phase(time[now]),
+    );
 
     println!(
         "{}° {}% {} {:.8} ~{}%",
-        temp[now],
-        humid[now],
-        wind_format,
-        wmo_decode(
-            wmo[now],
-            time[now] < sunset && time[now] > sunrise,
-            get_moon_phase(time[now])
-        ),
-        precip_max,
+        temp[now], humid[now], wind_format, wmo_string, precip_max,
     );
 }
 
 // makes a bar as val moves between low and high
-fn mk_bar(val: &f32, low: &f32, high: &f32, bar_low: &f32, bar_max: usize) -> String {
-    let x = lerp(*val, *low, *high, *bar_low, bar_max as f32 - 1.0);
+fn mk_bar(val: &f64, low: &f64, high: &f64, bar_low: &f64, bar_max: usize) -> String {
+    let x = lerp(*val, *low, *high, *bar_low, bar_max as f64 - 1.0);
     let mut blocks: String = "█".repeat(x as usize);
     let y = x - x.trunc();
     let conversion = match y {
@@ -655,50 +638,8 @@ fn get_time_index(time_data: &[u32]) -> usize {
     result
 }
 
-// defines global variables about what shape data should be displayed in
-// using term height and width
-#[deprecated(note = "Move to lazy static")]
-fn define_dimensions() {
-    let min_width_without_bars: usize = 2 + 5 + 6 + 5 + 5 + 6 + 10;
-    let max_width = 80;
-    let bar_count: usize = 2;
-    let mut w = TERM_WIDTH.lock().unwrap();
-    let mut h = TERM_HEIGHT.lock().unwrap();
-    match term_size::dimensions() {
-        Some((width, height)) => {
-            if width < max_width {
-                *w = width
-            } else {
-                *w = max_width
-            };
-            *h = height;
-        }
-        None => {
-            eprintln!("Unable to get terminal size")
-        }
-    }
-
-    *BAR_MAX.lock().unwrap() = (*w - min_width_without_bars - bar_count) / 2;
-
-    let full_res_h: usize = (START_DISPLAY + END_DISPLAY) / 4;
-    match *h {
-        x if x > full_res_h => { // will use default (4)
-        }
-        x if x <= full_res_h && x > (full_res_h * 2 / 3) => {
-            *HOURLY_RES.lock().unwrap() = 6;
-        }
-        x if x <= (full_res_h * 2 / 3) && x > (full_res_h / 3) => {
-            *HOURLY_RES.lock().unwrap() = 8;
-        }
-        x if x <= (full_res_h / 3) => {
-            *HOURLY_RES.lock().unwrap() = 12;
-        }
-        _ => {}
-    }
-}
-
 fn wind_di_decode(di: i16) -> &'static str {
-    match di as f32 {
+    match di as f64 {
         x if (337.5..=360.0).contains(&x) => "N",
         x if (0.0..=22.5).contains(&x) => "N",
         x if (22.5..=67.5).contains(&x) => "NE",
@@ -754,29 +695,29 @@ fn get_moon_phase(time: u32) -> MoonPhase {
     }
 }
 
-// fn compute_wet_bulb(temp: f32, relative_humidity_percent: f32) -> f32 { }
-fn compute_wet_bulb(temp: f32, rh: f32) -> f32 {
-    match SETTINGS.temp_scale {
+// fn compute_wet_bulb(temp: f64, relative_humidity_percent: f64) -> f64 { }
+fn compute_wet_bulb(temp: f64, rh: f64) -> f64 {
+    match SETTINGS.temp_scale() {
         TempScale::Celsius => {
-            temp * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan() + (temp + rh).atan()
-                - (rh - 1.676331f32).atan()
-                + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
-                - 4.686035f32
+            temp * (0.151977f64 * (rh + 8.313659f64).powf(1.0 / 2.0)).atan() + (temp + rh).atan()
+                - (rh - 1.676331f64).atan()
+                + 0.00391838f64 * rh.powf(3.0 / 2.0) * (0.023101f64 * rh).atan()
+                - 4.686035f64
         }
         TempScale::Fahrenheit => {
             let temp_c = (temp - 32.0) * 5.0 / 9.0;
-            let wb_c = temp_c * (0.151977f32 * (rh + 8.313659f32).powf(1.0 / 2.0)).atan()
+            let wb_c = temp_c * (0.151977f64 * (rh + 8.313659f64).powf(1.0 / 2.0)).atan()
                 + (temp_c + rh).atan()
-                - (rh - 1.676331f32).atan()
-                + 0.00391838f32 * rh.powf(3.0 / 2.0) * (0.023101f32 * rh).atan()
-                - 4.686035f32;
+                - (rh - 1.676331f64).atan()
+                + 0.00391838f64 * rh.powf(3.0 / 2.0) * (0.023101f64 * rh).atan()
+                - 4.686035f64;
             (wb_c * 9.0 / 5.0) + 32.0
         }
     }
 }
 
-fn get_temp_rgb(temp: f32) -> Rgb {
-    match SETTINGS.temp_scale {
+fn get_temp_rgb(temp: f64) -> Rgb {
+    match SETTINGS.temp_scale() {
         TempScale::Fahrenheit => match temp {
             x if (105.0..130.0).contains(&x) => rgb_lerp(temp, 105.0, 130.0, &OG4, &OG5),
             x if (80.0..105.0).contains(&x) => rgb_lerp(temp, 80.0, 105.0, &OG3, &OG4),
@@ -800,10 +741,8 @@ fn get_temp_rgb(temp: f32) -> Rgb {
 
 // displays hourly weather info for the CLI
 fn hourly_weather(md: MeteoApiResponse) {
-    // defines global variables about what shape data should be displayed in
-    define_dimensions();
-    let sunset = md.daily.sunset[*PAST_DAYS as usize];
-    let sunrise = md.daily.sunrise[*PAST_DAYS as usize];
+    let sunset = md.daily.sunset[PAST_DAYS as usize];
+    let sunrise = md.daily.sunrise[PAST_DAYS as usize];
 
     let time_data = &md.minutely_15.time;
     let current_time_index = get_time_index(time_data);
@@ -820,11 +759,11 @@ fn hourly_weather(md: MeteoApiResponse) {
     let wmo = &md.minutely_15.weather_code[start..end];
 
     // high/low temp bar
-    let mut low: f32 = *temp
+    let mut low: f64 = *temp
         .iter()
         .min_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap();
-    let mut high: f32 = *temp
+    let mut high: f64 = *temp
         .iter()
         .max_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap();
@@ -845,53 +784,52 @@ fn hourly_weather(md: MeteoApiResponse) {
     }
 
     // display collector
-    let mut display = String::new();
+    let mut dst = String::new();
 
-    display.push_str(&format!(
-        "{:>6}  {:6}{:bar$}{:>5}{:>3}{:>8} {:bar$} {:>5}    {:<8}\n",
-        "TIME",
-        "TEMP",
+    write!(
+        dst,
+        "  TIME   TEMP {:bar$}  HMT    WB PRCP {:bar$}  WIND WMO\n",
         "TEMP-BAR",
-        "HMT",
-        "WB",
-        "PRCP",
         "PRCP-BAR",
-        "WIND",
-        "WMO",
-        bar = *BAR_MAX.lock().unwrap()
-    ));
+        bar = BAR_MAX
+    )
+    .unwrap();
 
-    for i in (0..temp.len()).step_by(*HOURLY_RES.lock().unwrap()) {
+    for i in (0..temp.len()).step_by(*HOURLY_RES) {
         // hour title
-        if i == START_DISPLAY {
-            display.push_str(&format!("{} ", add_bg_esc(">", &PURPLE)));
+        let default_fg_esc = if i == START_DISPLAY {
+            let mut esc = String::new();
+            WHITE.write_fg_esc(&mut esc).unwrap();
+
+            PURPLE.write_bg_esc(&mut dst).unwrap();
+            write!(dst, "{esc}> ").unwrap();
+
+            esc
         } else {
-            display.push_str(&format!("  "));
+            write!(dst, "  ").unwrap();
+
+            "\x1b[0m".to_string()
         };
 
         // hour
         let time_offset = time[i] as i64 + md.utc_offset_seconds;
         let hour = (time_offset / 3600) % 24; // 3600 seconds in an hour
         let am_pm = to_am_pm(hour);
-        let hour_stdwth = format!("{:>4}", am_pm);
-        let hour_format = add_fg_esc(&hour_stdwth, &WHITE);
-        display.push_str(&format!("{hour_format} "));
+        write!(dst, "{am_pm:4.4} ").unwrap();
 
         // temp
-        let rgb_temp = get_temp_rgb(temp[i]);
-        let format_temp = add_fg_esc(&format!("{:5.1}°", temp[i]), &rgb_temp);
-        display.push_str(&format!("{format_temp} "));
+        get_temp_rgb(temp[i]).write_fg_esc(&mut dst).unwrap();
+        write!(dst, "{:5.1}° ", temp[i]).unwrap();
 
         // temp bar
-        let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX.lock().unwrap());
-        let format_temp_bar = add_fg_esc(&temp_bar, &rgb_temp);
-        display.push_str(&format!("{format_temp_bar} "));
+        let temp_bar = mk_bar(&temp[i], &low, &high, &1.0, *BAR_MAX);
+        write!(dst, "{temp_bar:n$.n$} ", n = BAR_MAX).unwrap();
 
         // humidity
-        let rgb_humid = rgb_lerp(humid[i], 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        let humid_strwth = format!("{:3}%", humid[i]);
-        let format_humid = add_fg_esc(&humid_strwth, &rgb_humid);
-        display.push_str(&format!("{format_humid} "));
+        rgb_lerp(humid[i], 30.0, 90.0, &WHITE, &DEEP_BLUE)
+            .write_fg_esc(&mut dst)
+            .unwrap();
+        write!(dst, "{:3.0}% ", humid[i]).unwrap();
 
         // WET BULB
         let wb = compute_wet_bulb(temp[i], humid[i]);
@@ -901,134 +839,118 @@ fn hourly_weather(md: MeteoApiResponse) {
             x if x < 70.0 => WHITE,
             _ => rgb_lerp(wb, -100.0, 130.0, &BLACK, &WHITE),
         };
-        let format_wb = add_fg_esc(&format!("{:4.1}° ", wb), &rgb_wb);
-        display.push_str(&format!("{}", format_wb));
+        rgb_wb.write_fg_esc(&mut dst).unwrap();
+        write!(dst, "{wb:5.1} ").unwrap();
 
         // precipitation
-        let rgb_precip = rgb_lerp(precip[i], 0.0, 100.0, &ICE_BLUE, &DEEP_BLUE);
-        let precip_strwth = format!("{:3}%", precip[i]);
-        let format_precip = add_fg_esc(&precip_strwth, &rgb_precip);
-        display.push_str(&format!("{format_precip} "));
+        rgb_lerp(precip[i], 0.0, 100.0, &ICE_BLUE, &DEEP_BLUE)
+            .write_fg_esc(&mut dst)
+            .unwrap();
+        write!(dst, "{:3.0}% ", precip[i]).unwrap();
 
         // precip bar
-        let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, *BAR_MAX.lock().unwrap());
-        let format_precip_bar = add_fg_esc(&precip_bar.to_string(), &rgb_precip);
-        display.push_str(&format!("{format_precip_bar} "));
+        let precip_bar = mk_bar(&precip[i], &0.0, &100.0, &0.0, *BAR_MAX);
+        write!(dst, "{precip_bar:n$.n$} ", n = BAR_MAX).unwrap();
 
         // wind
-        let wind_format = {
-            let direction = wind_di_decode(wind_di[i]);
-            format!(
-                "\x1b[38;2;222;222;222m{1:>2.0} {0:2}",
-                direction, &wind_spd[i]
-            )
-        };
-        display.push_str(&format!("{:<3} ", wind_format));
+        let direction = wind_di_decode(wind_di[i]);
+        write!(
+            dst,
+            "{default_fg_esc}{:>2.0} {:2.2} ",
+            &wind_spd[i], direction,
+        )
+        .unwrap();
 
         // wmo code msg
-        let format_wmo = wmo_decode(
+        let (wmo_string, wmo_rgb) = wmo_decode(
             wmo[i],
             time[i] < sunset && time[i] > sunrise,
             get_moon_phase(time[i]),
         );
-        display.push_str(&format!("{:<3}", format_wmo));
+        wmo_rgb.write_fg_esc(&mut dst).unwrap();
+        write!(dst, "{wmo_string:<n$.n$}", n = 15).unwrap();
 
-        display.push_str(&format!("\x1b[0m\n"));
+        write!(dst, "\x1b[0m\n").unwrap();
     }
-    print!("{}", display);
+    print!("{}", dst);
 }
 
-// check if the cache is recent
-// returns True if the absolute difference between SYSTEM_TIME and cache.current.time
-// is <= CACHE_TIMEOUT
-fn is_cache_valid<P: AsRef<Path>>(path: P) -> bool {
-    const CACHE_TIMEOUT: u64 = 1800; // 60 minutes in seconds
+fn is_cache_valid<P: AsRef<Path> + std::fmt::Debug>(
+    path: P,
+    timeout: u64,
+    ip_data: Option<&IpApiResponse>,
+) -> Result<MeteoApiResponse> {
+    let Ok(content) = fs::read_to_string(&path) else {
+        return Err(anyhow!("Failed to read file: {path:?}"));
+    };
 
-    if SETTINGS.cache_override {
-        return false;
+    let Ok(json) = serde_json::from_str::<MeteoApiResponse>(&content) else {
+        return Err(anyhow!("Failed deserialize file content"));
+    };
+
+    if (*SYSTEM_TIME as i64 - json.current.time as i64).unsigned_abs() >= timeout {
+        return Err(anyhow!("Cache outdated."));
     }
 
-    match fs::read_to_string(&path) {
-        Ok(string) => match serde_json::from_str::<MeteoApiResponse>(&string) {
-            Ok(json) => {
-                if (*SYSTEM_TIME as i64 - json.current.time as i64).unsigned_abs() >= CACHE_TIMEOUT
-                {
-                    return false;
-                }
-                match (
-                    &SETTINGS.temp_scale,
-                    json.hourly_units.temperature_2m.as_str(),
-                ) {
-                    (TempScale::Fahrenheit, "°F") => {}
-                    (TempScale::Celsius, "°C") => {}
-                    (_, _) => return false,
-                }
-
-                // small changes in location can make a big diff fyi
-                if let Some(latlon) = SETTINGS.latlon {
-                    if (latlon.lat - json.latitude).abs() > 0.1 {
-                        return false;
-                    }
-                    if (latlon.lon - json.longitude).abs() > 0.1 {
-                        return false;
-                    }
-                }
-
-                true
-            }
-            Err(e) => {
-                if !SETTINGS.quiet {
-                    println!("Failed to read cache JSON with err: {e}");
-                }
-                false
-            }
-        },
-        Err(e) => {
-            if !SETTINGS.quiet {
-                println!("Failed to read cache with err: {e}");
-            }
-            false
+    match (
+        SETTINGS.temp_scale(),
+        json.hourly_units.temperature_2m.as_str(),
+    ) {
+        (TempScale::Fahrenheit, "°F") => {}
+        (TempScale::Celsius, "°C") => {}
+        (a, b) => {
+            return Err(anyhow!(
+                "Cache temp unit did not match configured: {a:?} != {b}"
+            ))
         }
     }
-}
 
-// check if a cache is present
-fn check_cache<P: AsRef<Path>>(path: P) -> bool {
-    if SETTINGS.cache_override {
-        return false;
-    }
-    match fs::read_to_string(&path) {
-        Ok(json_str) => match serde_json::from_str::<Value>(&json_str) {
-            Ok(_) => true,
-            Err(e) => {
-                if !SETTINGS.quiet {
-                    println!("Failed to read cache JSON with err: {e}");
-                }
-                false
-            }
-        },
-        Err(e) => {
-            if !SETTINGS.quiet {
-                println!("Failed to read cache with err: {e}");
-            }
-            false
+    // At their maximum (since longitude varies by latitude) one unit of either corresponds
+    // to 111km on earth. so this has a maximum error of √((111 * n)² * 2) or ~7.8 at 0.02
+    const REQ_ACCURACY: f64 = 0.05;
+    if let Some(latlon) = SETTINGS.latlon() {
+        if (latlon.lat - json.latitude).abs() > REQ_ACCURACY
+            || (latlon.lon - json.longitude).abs() > REQ_ACCURACY
+        {
+            return Err(anyhow!(
+                "Cache lat or lon did not match desired. {} =! {} OR {} =! {}",
+                latlon.lat,
+                json.latitude,
+                latlon.lon,
+                json.longitude
+            ));
+        }
+    } else {
+        let ip_data = ip_data.unwrap();
+        if (ip_data.lat - json.latitude).abs() > REQ_ACCURACY
+            || (ip_data.lon - json.longitude).abs() > REQ_ACCURACY
+        {
+            return Err(anyhow!(
+                "Cache lat or lon did not match desired. {} =! {} OR {} =! {}",
+                ip_data.lat,
+                json.latitude,
+                ip_data.lon,
+                json.longitude
+            ));
         }
     }
+
+    Ok(json)
 }
 
 // func to retreive meteo data
-fn get_meteo_or_ext(ip_object: IpApiResponse) -> MeteoApiResponse {
-    let meteo_url = &make_meteo_url(ip_object);
+fn get_meteo_or_ext(ip_object: &IpApiResponse) -> MeteoApiResponse {
+    let meteo_url = &make_meteo_url(&ip_object);
     match request_api(meteo_url) {
         Ok(meteo_data) => {
-            status_update("Data received.");
+            debug!("Data received.");
             let json = serde_json::to_string(&meteo_data).unwrap();
             match fs::write(&*SAVE_LOCATION, json) {
                 Ok(_) => {
-                    status_update("Cache saved.");
+                    debug!("Cache saved.");
                 }
                 Err(e) => {
-                    status_update(format!("Err: {e}"));
+                    debug!("Err: {e}");
                 }
             }
             meteo_data
@@ -1041,89 +963,7 @@ fn get_meteo_or_ext(ip_object: IpApiResponse) -> MeteoApiResponse {
     }
 }
 
-// func for arms of match statement where there is no usable cache
-fn no_cache_arm() -> MeteoApiResponse {
-    match request_api(IP_URL) {
-        Ok(ip_data) => {
-            status_update("Data received.");
-            get_meteo_or_ext(ip_data)
-        }
-        Err(e) => {
-            status_update(format!("No data received with Err: {e}"));
-            status_update("Using default.");
-            let ip_default: IpApiResponse = IpApiResponse {
-                status: String::from("default"),
-                lat: Some(DEFAULT_LAT),
-                lon: Some(DEFAULT_LON),
-                timezone: Some(String::from(DEFAULT_TIMEZONE)),
-            };
-            get_meteo_or_ext(ip_default)
-        }
-    }
-}
-
-// retrieve the cache
-fn get_cache<E>() -> Result<MeteoApiResponse, E>
-where
-    E: From<std::io::Error>,    // E can be created from io::Error
-    E: From<serde_json::Error>, // E can be created from serde_json::Error
-{
-    match fs::read_to_string(&*SAVE_LOCATION) {
-        // cache readable
-        Ok(data) => match serde_json::from_str(&data) {
-            Ok(valid_data) => Ok(valid_data),
-            Err(e) => Err(e.into()),
-        },
-        // cache unreadable
-        Err(e) => Err(e.into()),
-    }
-}
-
-// return the cache as data
-fn use_cache() -> MeteoApiResponse {
-    status_update("Using Cache.");
-    match get_cache::<Box<dyn std::error::Error>>() {
-        // cache readable
-        Ok(valid_data) => valid_data,
-        // cache unreadable
-        Err(e) => {
-            status_update(format!("Cache unreadable with Err: {e}"));
-            no_cache_arm()
-        }
-    }
-}
-
-// gets fresh Meteo data or uses the cache, depending on cache age
-fn get_meteo_or_cache(ip_object: IpApiResponse) -> MeteoApiResponse {
-    let meteo_url = &make_meteo_url(ip_object);
-    match request_api(meteo_url) {
-        Ok(meteo_data) => {
-            status_update("Data received.");
-            let json = serde_json::to_string(&meteo_data).unwrap();
-            match fs::write(&*SAVE_LOCATION, json) {
-                Ok(_) => {
-                    status_update("Cache saved.");
-                }
-                Err(e) => {
-                    status_update(format!("Err: {e}"));
-                }
-            }
-            meteo_data
-        }
-        Err(e) => {
-            println!("Err: {e}");
-            use_cache()
-        }
-    }
-}
-
-macro_rules! di_add {
-    ($display:expr, $format:expr, $rgb:expr) => {
-        $display.push_str(&add_fg_esc(&$format, &$rgb));
-    };
-}
-
-fn get_wb_rgb(wb: f32) -> Rgb {
+fn get_wb_rgb(wb: f64) -> Rgb {
     match wb {
         x if x > 95.0 => RED,
         x if (70.0..95.0).contains(&x) => rgb_lerp(wb, 70.0, 95.0, &WHITE, &RED),
@@ -1144,64 +984,66 @@ fn timestamp_to_date_components(timestamp: i64) -> (u32, u32, Weekday, i32) {
 }
 
 fn weekly_weather(md: MeteoApiResponse) {
-    // defines global variables about what shape data should be displayed in
-    define_dimensions();
     const CHUNK_LEN: usize = 24 * 4;
-    // let time_data = &md.minutely_15.time;
-    // let current_time_index = get_time_index(time_data);
 
-    let mut di: Vec<String> = vec![String::new(); (*PAST_DAYS + *FORECAST_DAYS) as usize];
+    let mut di: Vec<String> = vec![String::new(); (PAST_DAYS + FORECAST_DAYS) as usize];
 
+    // Date headers
     for (i, y) in md.minutely_15.time.chunks(CHUNK_LEN).enumerate() {
         assert!(y.len() == CHUNK_LEN);
 
-        if i == *PAST_DAYS as usize {
-            di[i].push_str(&format!("{} ", add_bg_esc(">", &PURPLE)));
+        if i == PAST_DAYS as usize {
+            write!(di[i], "> ").unwrap();
         } else {
-            di[i].push_str(&format!("  "));
-        };
+            write!(di[i], "  ").unwrap();
+        }
 
         let timestamp = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as i64;
         let (month, day, weekday, _) = timestamp_to_date_components(timestamp);
-        di_add!(di[i], format!("{weekday} {month:>2}-{day:<2}"), &WHITE);
+        // WHITE.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{weekday} {month:>2}-{day:<2}").unwrap();
     }
 
+    // Temperature data
     let gl_min = md
         .minutely_15
         .temperature_2m
         .iter()
-        .map(|x| *x as f32)
-        .reduce(f32::min)
+        .map(|x| *x as f64)
+        .reduce(f64::min)
         .unwrap();
     let gl_max = md
         .minutely_15
         .temperature_2m
         .iter()
-        .map(|x| *x as f32)
-        .reduce(f32::max)
+        .map(|x| *x as f64)
+        .reduce(f64::max)
         .unwrap();
+
+    let lcl_bar_max = *BAR_MAX - 4;
+
     for (i, y) in md.minutely_15.temperature_2m.chunks(CHUNK_LEN).enumerate() {
-        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let min = y.iter().map(|x| *x as f64).reduce(f64::min).unwrap();
         let rgb_min = get_temp_rgb(min);
-        di_add!(di[i], format!("{:>6.1}", min), rgb_min);
+        rgb_min.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>6.1}", min).unwrap();
 
-        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let max = y.iter().map(|x| *x as f64).reduce(f64::max).unwrap();
         let rgb_max = get_temp_rgb(max);
-        di_add!(di[i], format!("{:->6.1}", max), rgb_max);
+        rgb_max.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:->6.1}", max).unwrap();
 
-        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f64;
         let rgb_mean = get_temp_rgb(mean);
-        di_add!(di[i], format!("{:>6.1}", mean), rgb_mean);
+        rgb_mean.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>6.1}", mean).unwrap();
 
-        let lcl_bar_max = *BAR_MAX.lock().unwrap() - 4;
         let mean_bar = mk_bar(&mean, &gl_min, &gl_max, &1.0, lcl_bar_max);
-        di_add!(
-            di[i],
-            format!("{:>bar$} ", mean_bar, bar = lcl_bar_max + 1),
-            rgb_mean
-        );
+        rgb_mean.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>bar$} ", mean_bar, bar = lcl_bar_max + 1).unwrap();
     }
 
+    // Humidity data
     for (i, y) in md
         .minutely_15
         .relative_humidity_2m
@@ -1210,21 +1052,25 @@ fn weekly_weather(md: MeteoApiResponse) {
     {
         assert!(y.len() == CHUNK_LEN);
 
-        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let min = y.iter().map(|x| *x as f64).reduce(f64::min).unwrap();
         let rgb_min = rgb_lerp(min, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[i], format!("{:>4.0}%", min), rgb_min);
+        rgb_min.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>4.0}%", min).unwrap();
 
-        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let max = y.iter().map(|x| *x as f64).reduce(f64::max).unwrap();
         let rgb_max = rgb_lerp(max, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[i], format!("{:->4.0}%", max), rgb_max);
+        rgb_max.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:->4.0}%", max).unwrap();
 
-        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f64;
         let rgb_mean = rgb_lerp(mean, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[i], format!("{:>4.0}%", mean), rgb_mean);
+        rgb_mean.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>4.0}%", mean).unwrap();
     }
 
+    // Wet bulb temperature
     let wbs = {
-        let mut wbs: Vec<f32> = vec![];
+        let mut wbs: Vec<f64> = vec![];
         for i in 0..md.minutely_15.relative_humidity_2m.len() {
             wbs.push(compute_wet_bulb(
                 md.minutely_15.temperature_2m[i],
@@ -1233,110 +1079,73 @@ fn weekly_weather(md: MeteoApiResponse) {
         }
         wbs
     };
+
     for (i, y) in wbs.chunks(CHUNK_LEN).enumerate() {
         assert!(y.len() == CHUNK_LEN);
 
-        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
+        let min = y.iter().map(|x| *x as f64).reduce(f64::min).unwrap();
         let rgb_min = get_wb_rgb(min);
-        di_add!(di[i], format!("{:>6.1}", min), rgb_min);
+        rgb_min.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>6.1}", min).unwrap();
 
-        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
+        let max = y.iter().map(|x| *x as f64).reduce(f64::max).unwrap();
         let rgb_max = get_wb_rgb(max);
-        di_add!(di[i], format!("{:->6.1}", max), rgb_max);
+        rgb_max.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:->6.1}", max).unwrap();
 
-        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f64;
         let rgb_mean = get_wb_rgb(mean);
-        di_add!(di[i], format!("{:>6.1}", mean), rgb_mean);
+        rgb_mean.write_fg_esc(&mut di[i]).unwrap();
+        write!(di[i], "{:>6.1}", mean).unwrap();
     }
 
+    // Wind speed data
     for (i, y) in md.minutely_15.wind_speed_10m.chunks(CHUNK_LEN).enumerate() {
-        assert!(y.len() == CHUNK_LEN);
+        write!(di[i], "\x1b[0m").unwrap();
 
-        let min = y.iter().map(|x| *x as f32).reduce(f32::min).unwrap();
-        let rgb_min = rgb_lerp(min, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[i], format!("{:>3.0}", min), rgb_min);
+        let min = y.iter().map(|x| *x as f64).reduce(f64::min).unwrap();
+        write!(di[i], "{:>3.0}", min).unwrap();
 
-        let max = y.iter().map(|x| *x as f32).reduce(f32::max).unwrap();
-        let rgb_max = rgb_lerp(max, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[i], format!("{:->3.0}", max), rgb_max);
+        let max = y.iter().map(|x| *x as f64).reduce(f64::max).unwrap();
+        write!(di[i], "{:->3.0}", max).unwrap();
 
-        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f32;
-        let rgb_mean = rgb_lerp(mean, 30.0, 90.0, &WHITE, &DEEP_BLUE);
-        di_add!(di[i], format!("{:>3.0}", mean), rgb_mean);
+        let mean = (y.iter().map(|x| *x as f64).sum::<f64>() / y.len() as f64) as f64;
+        write!(di[i], "{:>3.0}", mean).unwrap();
     }
 
+    // UV index
     for (i, uv) in md.daily.uv_index_max.iter().enumerate() {
-        di[i].push_str(&format!(" \x1b[0m{:3.1}", uv));
+        write!(di[i], " {:3.1}", uv).unwrap();
     }
 
-    for (i, wc) in md.daily.weather_code.iter().enumerate() {
-        di[i].push_str(&format!(
-            " {:<}",
-            wmo_decode(*wc, true, get_moon_phase(md.daily.time[i]))
-        ));
-    }
-
+    println!(
+        "  DAY  DATE              TEMP {:bar$}             HMT                WB     WIND  UV",
+        "TEMP-BAR",
+        bar = lcl_bar_max
+    );
     for line in di.into_iter() {
         println!("{line}\x1b[0m");
     }
 }
 
 fn main() {
-    let weather_data: MeteoApiResponse = match check_cache(&*SAVE_LOCATION) {
-        // cache exists
-        true => {
-            match is_cache_valid(&*SAVE_LOCATION) {
-                // cache is recent
-                true => use_cache(),
-                // cache is old
-                false => {
-                    status_update("Cache invalid.");
-                    match request_api(IP_URL) {
-                        // ip data received
-                        Ok(ip_data) => {
-                            status_update("Data received.");
-                            get_meteo_or_ext(ip_data)
-                        }
-                        // no ip data recieved
-                        Err(e) => {
-                            status_update(format!("No data received with Err: {e}"));
-                            match get_cache::<Box<dyn std::error::Error>>() {
-                                // cache readable
-                                Ok(save_data) => {
-                                    let ip_cache: IpApiResponse = IpApiResponse {
-                                        status: String::from("cache"),
-                                        lat: Some(save_data.latitude),
-                                        lon: Some(save_data.longitude),
-                                        timezone: Some(save_data.timezone),
-                                    };
-                                    get_meteo_or_cache(ip_cache)
-                                }
-                                // cache unreadable
-                                Err(e) => {
-                                    status_update(format!("Cache unreadable with Err: {e}"));
-                                    no_cache_arm()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // cache does not exist
-        false => {
-            status_update("No cache found.");
-            no_cache_arm()
+    let ip_data: Result<IpApiResponse> = request_api(IP_URL);
+    let weather_data = match is_cache_valid(&*SAVE_LOCATION, 1800, ip_data.as_ref().ok()) {
+        Ok(data) => data,
+        Err(e) => {
+            debug!("Cache fail: {e}");
+            get_meteo_or_ext(ip_data.as_ref().expect("Req to {IP_API} failed."))
         }
     };
 
-    match &SETTINGS.mode {
+    match SETTINGS.mode() {
         Mode::Current => {
             one_line_weather(weather_data);
         }
-        Mode::Day => {
+        Mode::Hourly => {
             hourly_weather(weather_data);
         }
-        Mode::Week => {
+        Mode::Daily => {
             weekly_weather(weather_data);
         }
     }
