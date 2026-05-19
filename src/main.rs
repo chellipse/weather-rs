@@ -120,10 +120,10 @@ impl Settings {
     }
 
     fn temp_scale(&self) -> TempScale {
-        if self.celsius {
-            TempScale::Celsius
-        } else {
+        if self.fahrenheit {
             TempScale::Fahrenheit
+        } else {
+            TempScale::Celsius
         }
     }
 
