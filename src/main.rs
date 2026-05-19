@@ -13,7 +13,7 @@ use std::{
 };
 
 mod structs;
-use structs::{IpApiResponse, MeteoApiResponse};
+use structs::{GeocodingResponse, IpApiResponse, MeteoApiResponse};
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -101,11 +101,13 @@ struct Settings {
     #[arg(long, value_enum, default_value_t = EmojiMode::Technical)]
     emoji: EmojiMode,
 
-    #[arg(help = "Latitude")]
-    lat: Option<f64>,
+    /// Specify exact coordinates (format: "lat,lon", e.g. "41.88,-87.63")
+    #[arg(short = 'l', long, conflicts_with = "location")]
+    latlon: Option<String>,
 
-    #[arg(help = "Longitude")]
-    lon: Option<f64>,
+    /// Search for a location by name (e.g. "Chicago" or "Tokyo")
+    #[arg()]
+    location: Option<String>,
 }
 
 impl Settings {
@@ -132,12 +134,26 @@ impl Settings {
     }
 
     fn latlon(&self) -> Option<LatLon> {
-        match (self.lat, self.lon) {
-            (Some(lat), Some(lon)) => {
-                Some(LatLon::new(lat, lon).expect("Latitude or Longitude outside valid range"))
-            }
-            _ => None,
-        }
+        let s = self.latlon.as_deref()?;
+        let (lat_s, lon_s) = s.split_once(',').unwrap_or_else(|| {
+            Settings::command()
+                .error(
+                    ErrorKind::InvalidValue,
+                    format!("invalid \x1b[1m--latlon\x1b[22m format \"{s}\", expected \"lat,lon\""),
+                )
+                .exit()
+        });
+        let lat: f64 = lat_s.trim().parse().unwrap_or_else(|_| {
+            Settings::command()
+                .error(ErrorKind::InvalidValue, format!("invalid latitude \"{lat_s}\""))
+                .exit()
+        });
+        let lon: f64 = lon_s.trim().parse().unwrap_or_else(|_| {
+            Settings::command()
+                .error(ErrorKind::InvalidValue, format!("invalid longitude \"{lon_s}\""))
+                .exit()
+        });
+        Some(LatLon::new(lat, lon).expect("Latitude or Longitude outside valid range"))
     }
 }
 
@@ -197,57 +213,48 @@ static SYSTEM_TIME: LazyLock<u64> = LazyLock::new(|| {
         .as_secs()
 });
 
-static SETTINGS: LazyLock<Settings> = LazyLock::new(|| {
-    // Clap doesn't have a good solution for parsing positional args which
-    // might start with a hyphen, so we filter them out and then let it
-    // parse the rest
-    let mut args = Vec::new();
-    let mut lat: Option<f64> = None;
-    let mut lon: Option<f64> = None;
-
-    for x in std::env::args_os() {
-        if let Some(n) = x.to_str().and_then(|s| s.parse::<f64>().ok()) {
-            match (lat, lon) {
-                (None, None) => lat = Some(n),
-                (Some(_), None) => lon = Some(n),
-                // only valid if none of the non-lat/lon args can parse as a valid f64
-                _ => Settings::command()
-                    .error(
-                        ErrorKind::InvalidValue,
-                        format!("unexpected argument '\x1b[33m{n}\x1b[39m' found"),
-                    )
-                    .exit(),
-            }
-        } else {
-            args.push(x);
-        }
-    }
-
-    let mut settings = Settings::parse_from(args);
-
-    assert!(settings.lat.is_none());
-    assert!(settings.lon.is_none());
-
-    match (lat, lon) {
-        (Some(_), Some(_)) => {
-            settings.lat = lat;
-            settings.lon = lon;
-        }
-        (Some(_), None) => Settings::command()
-            .error(
-                ErrorKind::InvalidValue,
-                format!("\x1b[1m[LON]\x1b[22m must be specified if \x1b[1m[LAT]\x1b[22m is"),
-            )
-            .exit(),
-        (None, Some(_)) => unreachable!(),
-        (None, None) => {}
-    }
-
-    settings
-});
+static SETTINGS: LazyLock<Settings> = LazyLock::new(Settings::parse);
 
 // url for ip-api
 const IP_URL: &str = "http://ip-api.com/json/";
+
+// url for open-meteo geocoding
+const GEOCODING_URL: &str = "https://geocoding-api.open-meteo.com/v1/search";
+
+fn geocode_location(name: &str) -> IpApiResponse {
+    let url = format!(
+        "{GEOCODING_URL}?name={}&count=1&language=en&format=json",
+        name
+    );
+    let response: GeocodingResponse = match request_api(&url) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: failed to reach geocoding API: {e}");
+            std::process::exit(1);
+        }
+    };
+    let result = match response.results.and_then(|mut r| if r.is_empty() { None } else { Some(r.remove(0)) }) {
+        Some(r) => r,
+        None => {
+            eprintln!("Error: no results found for location \"{name}\"");
+            std::process::exit(1);
+        }
+    };
+
+    let region = result.admin1.as_deref().unwrap_or("");
+    let country = result.country.as_deref().unwrap_or("");
+    eprintln!(
+        "Location: {}, {region}, {country} ({:.4}, {:.4})",
+        result.name, result.latitude, result.longitude
+    );
+
+    IpApiResponse {
+        status: "success".to_string(),
+        lat: result.latitude,
+        lon: result.longitude,
+        timezone: result.timezone,
+    }
+}
 
 // prev and future hours to display with Mode::Day * 4 because 15 minutely
 const START_DISPLAY: usize = 6 * 4;
@@ -1129,12 +1136,15 @@ fn weekly_weather(md: MeteoApiResponse) {
 }
 
 fn main() {
-    let ip_data: Result<IpApiResponse> = request_api(IP_URL);
+    let ip_data: Result<IpApiResponse> = match &SETTINGS.location {
+        Some(name) => Ok(geocode_location(name)),
+        None => request_api(IP_URL),
+    };
     let weather_data = match is_cache_valid(&*SAVE_LOCATION, 1800, ip_data.as_ref().ok()) {
         Ok(data) => data,
         Err(e) => {
             debug!("Cache fail: {e}");
-            get_meteo_or_ext(ip_data.as_ref().expect("Req to {IP_API} failed."))
+            get_meteo_or_ext(ip_data.as_ref().expect("Failed to resolve location"))
         }
     };
 

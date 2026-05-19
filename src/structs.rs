@@ -85,3 +85,18 @@ pub struct DailyData {
     pub uv_index_max: Vec<f64>,
     pub uv_index_clear_sky_max: Vec<f64>,
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GeocodingResponse {
+    pub results: Option<Vec<GeocodingResult>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GeocodingResult {
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub timezone: String,
+    pub country: Option<String>,
+    pub admin1: Option<String>,
+}
