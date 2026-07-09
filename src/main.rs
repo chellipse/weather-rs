@@ -13,7 +13,7 @@ use std::{
 };
 
 mod structs;
-use structs::{GeocodingResponse, IpApiResponse, MeteoApiResponse};
+use structs::{GeocodingResponse, GeocodingResult, IpApiResponse, MeteoApiResponse};
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
@@ -188,6 +188,12 @@ static SAVE_LOCATION: LazyLock<PathBuf> = LazyLock::new(|| {
     temp_dir
 });
 
+static GEOCODE_CACHE_LOCATION: LazyLock<PathBuf> = LazyLock::new(|| {
+    let mut temp_dir = env::temp_dir();
+    temp_dir.push("weather_geocode_cache.sqlite3");
+    temp_dir
+});
+
 static BAR_MAX: LazyLock<usize> = LazyLock::new(|| {
     let n = (TERM_DIMENSIONS.0 - 54) / 2;
     n.min(24)
@@ -221,23 +227,60 @@ const IP_URL: &str = "http://ip-api.com/json/";
 // url for open-meteo geocoding
 const GEOCODING_URL: &str = "https://geocoding-api.open-meteo.com/v1/search";
 
-fn geocode_location(name: &str) -> IpApiResponse {
-    let url = format!(
-        "{GEOCODING_URL}?name={}&count=1&language=en&format=json",
-        name
-    );
-    let response: GeocodingResponse = match request_api(&url) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Error: failed to reach geocoding API: {e}");
-            std::process::exit(1);
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if SETTINGS.debug {
+            println!($($arg)*);
         }
     };
-    let result = match response.results.and_then(|mut r| if r.is_empty() { None } else { Some(r.remove(0)) }) {
-        Some(r) => r,
-        None => {
-            eprintln!("Error: no results found for location \"{name}\"");
-            std::process::exit(1);
+}
+
+fn geocode_cache_open() -> Result<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(&*GEOCODE_CACHE_LOCATION)?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS geocode (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        [],
+    )?;
+    Ok(conn)
+}
+
+fn geocode_cache_get(key: &str) -> Result<GeocodingResult> {
+    let value: String = geocode_cache_open()?.query_row(
+        "SELECT value FROM geocode WHERE key = ?1",
+        [key],
+        |row| row.get(0),
+    )?;
+    Ok(serde_json::from_str(&value)?)
+}
+
+fn geocode_cache_put(key: &str, result: &GeocodingResult) -> Result<()> {
+    geocode_cache_open()?.execute(
+        "INSERT OR REPLACE INTO geocode (key, value) VALUES (?1, ?2)",
+        rusqlite::params![key, serde_json::to_string(result)?],
+    )?;
+    Ok(())
+}
+
+fn geocode_location(name: &str) -> IpApiResponse {
+    let cache_key = name.trim().to_lowercase();
+
+    let cached = if SETTINGS.refresh {
+        Err(anyhow!("cache bypassed by --refresh"))
+    } else {
+        geocode_cache_get(&cache_key)
+    };
+    let result = match cached {
+        Ok(r) => {
+            debug!("Geocode cache hit for {cache_key:?}");
+            r
+        }
+        Err(e) => {
+            debug!("Geocode cache miss for {cache_key:?}: {e}");
+            let result = geocode_request(name);
+            if let Err(e) = geocode_cache_put(&cache_key, &result) {
+                debug!("Failed to write geocode cache: {e}");
+            }
+            result
         }
     };
 
@@ -253,6 +296,27 @@ fn geocode_location(name: &str) -> IpApiResponse {
         lat: result.latitude,
         lon: result.longitude,
         timezone: result.timezone,
+    }
+}
+
+fn geocode_request(name: &str) -> GeocodingResult {
+    let url = format!(
+        "{GEOCODING_URL}?name={}&count=1&language=en&format=json",
+        name
+    );
+    let response: GeocodingResponse = match request_api(&url) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: failed to reach geocoding API: {e}");
+            std::process::exit(1);
+        }
+    };
+    match response.results.and_then(|mut r| if r.is_empty() { None } else { Some(r.remove(0)) }) {
+        Some(r) => r,
+        None => {
+            eprintln!("Error: no results found for location \"{name}\"");
+            std::process::exit(1);
+        }
     }
 }
 
@@ -280,14 +344,6 @@ const OG2: Rgb = Rgb { r: 74, g: 137, b: 135 };
 const OG3: Rgb = Rgb { r: 229, g: 219, b: 93 };
 const OG4: Rgb = Rgb { r: 249, g: 203, b: 49 };
 const OG5: Rgb = Rgb { r: 209, g: 68, b: 12 };
-
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        if SETTINGS.debug {
-            println!($($arg)*);
-        }
-    };
-}
 
 // request data from a website
 #[tokio::main]
