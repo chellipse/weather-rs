@@ -376,11 +376,6 @@ fn make_meteo_url(ip_data: &IpApiResponse) -> String {
         None => (ip_data.lat, ip_data.lon, ip_data.timezone.clone()),
     };
 
-    let scale = match SETTINGS.temp_scale() {
-        TempScale::Fahrenheit => "fahrenheit",
-        TempScale::Celsius => "celsius",
-    };
-
     let text = format!(
         concat!(
             "http://api.open-meteo.com/v1/forecast?",
@@ -390,14 +385,15 @@ fn make_meteo_url(ip_data: &IpApiResponse) -> String {
             "hourly=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "minutely_15=temperature_2m,relative_humidity_2m,dew_point_2m,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m&",
             "daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max,wind_speed_10m_max,weather_code,uv_index_max,uv_index_clear_sky_max&",
-            "temperature_unit={}&",  // <--
+            // always celsius; converted to the configured scale at display time
+            "temperature_unit=celsius&",
             "wind_speed_unit=mph&",
             "timeformat=unixtime&",
             "timezone={}&", // <--
             "past_days={}&", // <--
             "forecast_days={}" // <--
         ),
-        lat, lon, scale, timezone, PAST_DAYS, FORECAST_DAYS
+        lat, lon, timezone, PAST_DAYS, FORECAST_DAYS
     );
 
     text
@@ -642,7 +638,7 @@ fn one_line_weather(md: MeteoApiResponse) {
     );
 
     println!(
-        "{}° {}% {} {:.8} ~{}%",
+        "{:.1}° {}% {} {:.8} ~{}%",
         temp[now], humid[now], wind_format, wmo_string, precip_max,
     );
 }
@@ -758,6 +754,38 @@ fn get_moon_phase(time: u32) -> MoonPhase {
     }
 }
 
+fn c_to_f(c: f64) -> f64 {
+    c * 9.0 / 5.0 + 32.0
+}
+
+fn f_to_c(f: f64) -> f64 {
+    (f - 32.0) * 5.0 / 9.0
+}
+
+// weather data is always fetched and cached in celsius, so switching scales
+// doesn't invalidate the cache. convert it once here and the display code below
+// only ever sees numbers already in the configured scale.
+fn to_display_scale(md: &mut MeteoApiResponse) {
+    let TempScale::Fahrenheit = SETTINGS.temp_scale() else {
+        return;
+    };
+
+    fn convert(temps: &mut [f64]) {
+        for temp in temps.iter_mut() {
+            *temp = c_to_f(*temp);
+        }
+    }
+
+    md.current.temperature_2m = c_to_f(md.current.temperature_2m);
+    convert(&mut md.hourly.temperature_2m);
+    convert(&mut md.hourly.dew_point_2m);
+    convert(&mut md.minutely_15.temperature_2m);
+    convert(&mut md.minutely_15.dew_point_2m);
+    convert(&mut md.daily.temperature_2m_max);
+    convert(&mut md.daily.temperature_2m_min);
+    md.hourly_units.temperature_2m = "°F".to_string();
+}
+
 // fn compute_wet_bulb(temp: f64, relative_humidity_percent: f64) -> f64 { }
 fn compute_wet_bulb(temp: f64, rh: f64) -> f64 {
     match SETTINGS.temp_scale() {
@@ -768,13 +796,13 @@ fn compute_wet_bulb(temp: f64, rh: f64) -> f64 {
                 - 4.686035f64
         }
         TempScale::Fahrenheit => {
-            let temp_c = (temp - 32.0) * 5.0 / 9.0;
+            let temp_c = f_to_c(temp);
             let wb_c = temp_c * (0.151977f64 * (rh + 8.313659f64).powf(1.0 / 2.0)).atan()
                 + (temp_c + rh).atan()
                 - (rh - 1.676331f64).atan()
                 + 0.00391838f64 * rh.powf(3.0 / 2.0) * (0.023101f64 * rh).atan()
                 - 4.686035f64;
-            (wb_c * 9.0 / 5.0) + 32.0
+            c_to_f(wb_c)
         }
     }
 }
@@ -955,17 +983,13 @@ fn is_cache_valid<P: AsRef<Path> + std::fmt::Debug>(
         return Err(anyhow!("Cache outdated."));
     }
 
-    match (
-        SETTINGS.temp_scale(),
-        json.hourly_units.temperature_2m.as_str(),
-    ) {
-        (TempScale::Fahrenheit, "°F") => {}
-        (TempScale::Celsius, "°C") => {}
-        (a, b) => {
-            return Err(anyhow!(
-                "Cache temp unit did not match configured: {a:?} != {b}"
-            ))
-        }
+    // the cache is always stored in celsius, so anything else is from an older
+    // version and has to be refetched
+    if json.hourly_units.temperature_2m != "°C" {
+        return Err(anyhow!(
+            "Cache temp unit was not celsius: {}",
+            json.hourly_units.temperature_2m
+        ));
     }
 
     // At their maximum (since longitude varies by latitude) one unit of either corresponds
@@ -1196,13 +1220,14 @@ fn main() {
         Some(name) => Ok(geocode_location(name)),
         None => request_api(IP_URL),
     };
-    let weather_data = match is_cache_valid(&*SAVE_LOCATION, 1800, ip_data.as_ref().ok()) {
+    let mut weather_data = match is_cache_valid(&*SAVE_LOCATION, 1800, ip_data.as_ref().ok()) {
         Ok(data) => data,
         Err(e) => {
             debug!("Cache fail: {e}");
             get_meteo_or_ext(ip_data.as_ref().expect("Failed to resolve location"))
         }
     };
+    to_display_scale(&mut weather_data);
 
     match SETTINGS.mode() {
         Mode::Current => {
